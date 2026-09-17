@@ -1,7 +1,20 @@
-. ./dkms.uninstall
+#!/bin/sh
+set -e
 
-su -c "
-cp -a `pwd` /usr/src/$PACKAGE_NAME-$PACKAGE_VERSION;
-dkms add -m $PACKAGE_NAME -v $PACKAGE_VERSION;
-dkms build -m $PACKAGE_NAME -v $PACKAGE_VERSION;
-dkms install -m $PACKAGE_NAME -v $PACKAGE_VERSION"
+# カレントディレクトリの dkms.conf を読み込み
+. ./dkms.conf
+
+SRC_DIR="/usr/src/${PACKAGE_NAME}-${PACKAGE_VERSION}"
+
+# 事前アンインストール
+if [ -f ./dkms.uninstall ]; then
+    sh ./dkms.uninstall || true
+fi
+
+echo "Installing ${PACKAGE_NAME}-${PACKAGE_VERSION} to DKMS..."
+cp -a "$(pwd)" "${SRC_DIR}"
+dkms add -m "${PACKAGE_NAME}" -v "${PACKAGE_VERSION}"
+dkms build -m "${PACKAGE_NAME}" -v "${PACKAGE_VERSION}"
+dkms install -m "${PACKAGE_NAME}" -v "${PACKAGE_VERSION}"
+
+echo "DKMS installation completed successfully."

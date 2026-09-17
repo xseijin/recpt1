@@ -54,11 +54,10 @@ extern	WBLOCK	bs_get_agc;
 /***************************************************************************/
 extern	WBLOCK	isdb_t_pll_base;			// 地デジ用周波数テーブルbase
 extern	WBLOCK	isdb_t_pll_lock;
-extern	WBLOCK_BS_PLL	isdb_t_info[MAX_ISDB_T_INFO_LEN];
 extern	WBLOCK	isdb_t_check_tune;
 extern	WBLOCK	isdb_t_tune_read;
 extern	WBLOCK	isdb_t_tmcc_read_1;
-extern	WBLOCK	isdb_t_tmcc_read_1;
+extern	WBLOCK	isdb_t_tmcc_read_2;
 extern	WBLOCK	isdb_t_signal1;
 extern	WBLOCK	isdb_t_signal2;
 extern	WBLOCK	isdb_t_agc2;
@@ -76,7 +75,5 @@ extern	WBLOCK	isdb_t_wake2;
 
 extern	WBLOCK	isdb_s_sleep;
 extern	WBLOCK	isdb_t_sleep;
-
-extern	ISDB_S_CH_TABLE	isdb_t_table[11];
 
 #endif
