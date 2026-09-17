@@ -1,27 +1,33 @@
-【recpt1 HTTPサーバ版RC4 + α（STZ版）】
-Linux用PT1/PT2/PT3録画プログラムです。
-こちらは亜流版ですのでご注意下さい。
+【PT1/PT2 Linux用ドライバ 改修版】
 
-本家はこちら→ http://hg.honeyplanet.jp/pt1/
-※ドライバー部分は本家やその他分家（↓）のものをお使い下さい。
-　PT1/PT2：http://sourceforge.jp/projects/pt1dvr/
-　PT3：https://github.com/m-tsudo/pt3
+このリポジトリはドライバ（pt1_drv）のみを扱います。
+
+recpt1 本家→ http://hg.honeyplanet.jp/pt1/ （※リンク切れ。参考として残置）
+recpt1 (stz2012版)→ https://github.com/stz2012/recpt1
+
+ドライバーについて
+
+ドライバー本体（pt1_drv, d56831676696）は、下記の分家版をベースに、安定性・安全性まわりを中心に大幅に手を入れた独自改修版です。
+オリジナルとの互換性を保つ変更ではないため、そのまま流用する場合はご注意下さい。
+
+　ベース: https://github.com/stz2012/recpt1/driver/ (PT1/PT2)
+
+主な改修内容:
+
+xc3s_init 時のロック確立待ちがループ変数のバグで意図の1/10しかポーリングされず、カーネル更新後にロード失敗する不具合を修正
+TS再同期ロジックを作り直し（複数パケット分のバッファで本来の 188バイト周期チェックを行うよう変更。旧実装は原理的に一度も機能していなかった）
+複数カード搭載時のI2Cバス状態の取り違えを修正
+probe/removeまわりの各種メモリリーク・cdev登録エラー処理を追加
+ブロッキングreadが弱電界等で一時的にデータが来ない際、誤って EOF(0)を返し録画が打ち切られる不具合を修正。シグナル割込みの扱いも合わせて修正
+開いたファイル記述子が残ったままPCIデバイスが取り外された場合の Use-After-Free対策（参照カウント導入）
+レジスタアクセスの排他ロック不備（複数チャンネル同時アクセス時の競合）を修正
+LNB_ENABLE ioctlの範囲外配列アクセスを修正
+3.x〜6.x台の古いカーネル互換コードを削除し、現行カーネル向けに整理
+
 ※libarib25はこちら→ https://github.com/stz2012/libarib25
 
-cd recpt1/recpt1
-./autogen.sh
-./configure --enable-b25
-make
-でビルドした後、
-./recpt1 録画するチャンネル 録画秒数 出力先ファイル名
-で録画されます。
-詳しいオプションはrecpt1 --helpをご覧下さい。
+recpt1のビルド・使い方はstz2012版のドキュメント（上記リンク）に従って下さい。
 
-Special Thanks:
-・2chの「Linuxでテレビ総合」スレッドの皆様
-
-動作確認環境:
-  Debian 11 x86_64 GNU/Linux
-  Linux 5.10.0 SMP
-  Ubuntu 22.04 LTS x86_64 GNU/Linux
-  Linux 5.15.0 SMP
+動作確認環境: 
+Ubuntu 26.04.1 LTS (Resolute Raccoon) x86_64 GNU/Linux Linux 7.0.0-31-generic SMP 
+Ubuntu 24.04 LTS x86_64 GNU/Linux Linux 6.14.0 SMP
