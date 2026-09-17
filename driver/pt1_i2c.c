@@ -9,11 +9,8 @@
 #include <linux/interrupt.h>
 #include <linux/mutex.h>
 #include <linux/sched.h>
-#include <linux/version.h>
+#include <linux/spinlock.h>
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3,4,0)
-#include <asm/system.h>
-#endif
 #include <asm/io.h>
 #include <asm/irq.h>
 #include <asm/uaccess.h>
@@ -24,7 +21,53 @@
 #include	"pt1_tuner.h"
 
 #define		PROGRAM_ADDRESS		1024
-static	int		state = STATE_STOP ;
+/*
+ * FIX: state はファイルスコープの単一グローバルだったため、
+ * カードを複数枚搭載した環境で全カードの I2C バス状態が
+ * 1つの変数に混ざってしまっていた(片方のカードで通信すると
+ * もう片方の begin_i2c() が本来必要な初期化シーケンスを
+ * スキップしてしまう)。regs(カードごとに一意な MMIO ベース)を
+ * キーにした小テーブルへ切り出し、カードごとに独立させる。
+ */
+#define		MAX_I2C_DEVICES		8	// 想定搭載カード数の上限
+static	DEFINE_SPINLOCK(i2c_state_lock);
+static	struct {
+	void __iomem	*regs ;
+	int				state ;
+} i2c_state_table[MAX_I2C_DEVICES] ;
+
+static	int		*get_i2c_state(void __iomem *regs)
+{
+	unsigned long	flags ;
+	int				lp ;
+	int				*ret = NULL ;
+
+	spin_lock_irqsave(&i2c_state_lock, flags);
+	for(lp = 0 ; lp < MAX_I2C_DEVICES ; lp++){
+		if(i2c_state_table[lp].regs == regs){
+			ret = &i2c_state_table[lp].state ;
+			break ;
+		}
+	}
+	if(!ret){
+		for(lp = 0 ; lp < MAX_I2C_DEVICES ; lp++){
+			if(i2c_state_table[lp].regs == NULL){
+				i2c_state_table[lp].regs  = regs ;
+				i2c_state_table[lp].state = STATE_STOP ;
+				ret = &i2c_state_table[lp].state ;
+				break ;
+			}
+		}
+	}
+	spin_unlock_irqrestore(&i2c_state_lock, flags);
+
+	if(!ret){
+		// 想定外の搭載枚数。best-effort でslot0を共有する。
+		printk(KERN_WARNING "PT1:i2c state table full, sharing state (regs=%p)\n", regs);
+		ret = &i2c_state_table[0].state ;
+	}
+	return ret ;
+}
 static	int		i2c_lock(void __iomem *, __u32, __u32, __u32);
 static	int		i2c_lock_one(void __iomem *, __u32, __u32);
 static	int		i2c_unlock(void __iomem *, int);
@@ -35,7 +78,7 @@ static	void	stop_i2c(void __iomem *, __u32 *, __u32 *, __u32, __u32);
 
 
 // PCIに書き込むI2Cデータ生成
-void	makei2c(void __iomem *regs, __u32 base_addr, __u32 i2caddr, __u32 writemode, __u32 data_en, __u32 clock, __u32 busy)
+static void	makei2c(void __iomem *regs, __u32 base_addr, __u32 i2caddr, __u32 writemode, __u32 data_en, __u32 clock, __u32 busy)
 {
 
 	__u32		val ;
@@ -159,7 +202,8 @@ static	int		i2c_lock(void __iomem *regs, __u32 firstval, __u32  secondval, __u32
 		if((val & lockval)){
 			return 0 ;
 		}
-		schedule_timeout_interruptible(msecs_to_jiffies(1));
+		/* FIX: i2c_write/i2c_read と一貫性を持たせ uninterruptible に統一 */
+		schedule_timeout_uninterruptible(msecs_to_jiffies(1));
 	}
 	return -EIO ;
 }
@@ -170,20 +214,27 @@ static	int		i2c_lock_one(void __iomem *regs, __u32 firstval, __u32 lockval)
 	__u32	val ;
 	__u32	val2 ;
 	int		lp ;
+	int		lp2 ;
 
 	val = (readl(regs) & lockval);
 	writel(firstval, regs);
 
-	// RAMがロックされた？
+	/*
+	 * FIX: 内側ループが外側ループと同じ変数 lp を使い回していたため、
+	 * 内側ループ終了時点で lp が 1024 まで進んでしまい、外側ループの
+	 * 継続条件(lp < 10)を満たせず実質 1 回しか回らなかった
+	 * (最大 10240 回のポーリングを意図していたが実際は 1024 回だけ)。
+	 * 内側ループの変数を lp2 に分離する。
+	 */
 	for(lp = 0 ; lp < 10 ; lp++){
-		for(lp = 0 ; lp < 1024 ; lp++){
+		for(lp2 = 0 ; lp2 < 1024 ; lp2++){
 			val2 = readl(regs);
 			// 最初に取得したデータと逆になればOK
 			if(((val2 & lockval) != val)){
 				return 0 ;
 			}
 		}
-		schedule_timeout_interruptible(msecs_to_jiffies(1));
+		schedule_timeout_uninterruptible(msecs_to_jiffies(1));
 	}
 	printk(KERN_INFO "PT1:Lock Fault(%x:%x)\n", val, val2);
 	return -EIO ;
@@ -200,7 +251,7 @@ static	int		i2c_unlock(void __iomem *regs, int lockval)
 		if((val &lockval)){
 			return 0 ;
 		}
-		schedule_timeout_interruptible(msecs_to_jiffies(1));
+		schedule_timeout_uninterruptible(msecs_to_jiffies(1));
 	}
 	return -EIO ;
 }
@@ -212,13 +263,14 @@ void	blockwrite(void __iomem *regs, WBLOCK *wblock)
 	__u32	old_bits = 1 ;
 	__u32	address = 0;
 	__u32	clock = 0;
+	int		*pstate = get_i2c_state(regs) ;	// FIX: カード(regs)ごとの状態
 
 	begin_i2c(regs, &address, &clock);
-	if(state == STATE_STOP){
+	if(*pstate == STATE_STOP){
 		start_i2c(regs, &address, &clock, old_bits);
 		old_bits = 0 ;
 		stop_i2c(regs, &address, &clock, old_bits, FALSE);
-		state = STATE_START ;
+		*pstate = STATE_START ;
 	}
 	old_bits = 1 ;
 	start_i2c(regs, &address, &clock, old_bits);
@@ -256,7 +308,7 @@ void	blockwrite(void __iomem *regs, WBLOCK *wblock)
 
 }
 
-void	blockread(void __iomem *regs, WBLOCK *wblock, int count)
+static void	blockread(void __iomem *regs, WBLOCK *wblock, int count)
 {
 	int		lp ;
 	int		bitpos ;
@@ -264,13 +316,14 @@ void	blockread(void __iomem *regs, WBLOCK *wblock, int count)
 	__u32	old_bits = 1 ;
 	__u32	address = 0;
 	__u32	clock = 0;
+	int		*pstate = get_i2c_state(regs) ;	// FIX: カード(regs)ごとの状態
 
 	begin_i2c(regs, &address, &clock);
-	if(state == STATE_STOP){
+	if(*pstate == STATE_STOP){
 		start_i2c(regs, &address, &clock, old_bits);
 		old_bits = 0 ;
 		stop_i2c(regs, &address, &clock, old_bits, FALSE);
-		state = STATE_START ;
+		*pstate = STATE_START ;
 	}
 	old_bits = 1 ;
 	start_i2c(regs, &address, &clock, old_bits);
@@ -446,12 +499,19 @@ void	i2c_write(void __iomem *regs, struct mutex *lock, WBLOCK *wblock)
 	blockwrite(regs, wblock);
 	writel(FIFO_GO, regs + FIFO_GO_ADDR);
 	//とりあえずロックしないように。
+	/*
+	 * FIX: mutex(lock) 保持中の待ちに interruptible を使うと、
+	 * シグナル係属時に schedule_timeout が即時リターンし、
+	 * 意図した 1ms 待ちが行われずロック保持のままビジーループ気味に
+	 * 100回転してしまう。ここはユーザー空間からの中断を受け付ける
+	 * 必要がないため uninterruptible にする。
+	 */
 	for(lp = 0 ; lp < 100 ; lp++){
 		val = readl(regs + FIFO_RESULT_ADDR);
 		if(!(val & FIFO_DONE)){
 			break ;
 		}
-		schedule_timeout_interruptible(msecs_to_jiffies(1));
+		schedule_timeout_uninterruptible(msecs_to_jiffies(1));
 	}
 	mutex_unlock(lock);
 }
@@ -475,8 +535,9 @@ __u32	i2c_read(void __iomem *regs, struct mutex *lock, WBLOCK *wblock, int size)
 
 	writel(FIFO_GO, regs + FIFO_GO_ADDR);
 
+	/* FIX: i2c_write() と同様、mutex 保持中は uninterruptible にする。 */
 	for(lp = 0 ; lp < 100 ; lp++){
-		schedule_timeout_interruptible(msecs_to_jiffies(1));
+		schedule_timeout_uninterruptible(msecs_to_jiffies(1));
 		val = readl(regs + FIFO_RESULT_ADDR);
 		if(!(val & FIFO_DONE)){
 			break ;

@@ -7,11 +7,7 @@
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/mutex.h>
-#include <linux/version.h>
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3,4,0)
-#include <asm/system.h>
-#endif
 #include <asm/io.h>
 #include <asm/irq.h>
 #include <asm/uaccess.h>
@@ -234,7 +230,7 @@ void	set_sleepmode(void __iomem *regs, struct mutex *lock, int address, int tune
 	}
 }
 
-int		bs_frequency(void __iomem *regs, struct mutex *lock, int addr, int channel)
+static int		bs_frequency(void __iomem *regs, struct mutex *lock, int addr, int channel)
 {
 	int		lp ;
 	int		tmcclock = FALSE ;
@@ -417,7 +413,7 @@ int		isdb_s_read_signal_strength(void __iomem *regs, struct mutex *lock, int add
 	return val3 ;
 }
 
-__u32	getfrequency_add(__u32 channel)
+static __u32	getfrequency_add(__u32 channel)
 {
 	int		lp ;
 
@@ -428,25 +424,30 @@ __u32	getfrequency_add(__u32 channel)
 	}
 	return 0 ;
 }
-__u32	getfrequency(__u32 channel, int addfreq)
+static __u32	getfrequency(__u32 channel, int addfreq)
 {
-	__u32	frequencyoffset = 0;
-	__u32	frequencyOffset = 0;
+	/*
+	 * FIX: 以前は frequencyoffset(小文字, チャンネル位置補正の
+	 * 積算用) と frequencyOffset(大文字, 計算式の作業用一時変数)
+	 * という大文字小文字違いの紛らわしい2変数が存在した。
+	 * 旧実装(#if 0 で無効化されていた式)は常に0のままの
+	 * frequencyOffset を誤って参照するバグを持っていたが、
+	 * 現在有効な式は正しく積算値を参照しており計算結果自体は
+	 * 正しかった。可読性のため1変数に統合し、死んだ #if 0
+	 * ブロックは削除した。
+	 */
+	__u32	offset = 0;
 
 	if (12 <= channel)
-		frequencyoffset += 2;
+		offset += 2;
 	if (17 <= channel)
-		frequencyoffset -= 2;
-	if (63 <= channel){
-		frequencyoffset += 2;
-	}
-#if 0
-	return (((93 + channel * 6 + frequencyOffset) + addfreq) * 7) + 400;
-#endif
-	frequencyOffset = 93 + channel * 6 + frequencyoffset;
-	frequencyOffset = 7 * (frequencyOffset + addfreq);
-	return frequencyOffset + 400;
+		offset -= 2;
+	if (63 <= channel)
+		offset += 2;
 
+	offset = 93 + channel * 6 + offset;
+	offset = 7 * (offset + addfreq);
+	return offset + 400;
 }
 int		isdb_t_frequency(void __iomem *regs, struct mutex *lock, int addr, int channel, int addfreq)
 {
