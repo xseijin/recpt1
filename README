@@ -30,40 +30,13 @@ LNB_ENABLE ioctlの範囲外配列アクセスを修正
 サスペンド/レジューム、poll()/epoll()、debugfs統計を追加
 3.x〜6.x台の古いカーネル互換コードを削除し、現行カーネル向けに整理
 
-導入方法:
-
-依存パッケージのインストール（Ubuntu/Debian系）
-
-    sudo apt install build-essential linux-headers-$(uname -r)
-
-ビルド
-
-    make
-    # kernel object (pt1_drv.ko) が生成されます
-
-ロード
-
-    sudo insmod pt1_drv.ko
-    # 起動時に自動ロードしたい場合は sudo make install && sudo depmod -a の後、
-    # /etc/modules もしくは /etc/modules-load.d/pt1_drv.conf に "pt1_drv" を追記
-
-デバイスノードの確認
-
-    ls /dev/pt1video*
-    # カード1枚あたり pt1video0〜3 (ISDB-S x2, ISDB-T x2) が作成されます
-
 モジュールパラメータ（任意）
-
-    sudo insmod pt1_drv.ko dma_cpu=2 dma_rt=1 ring_count=65536
-    # dma_cpu:    DMA/watchdogスレッドを固定するCPU番号（-1=無効、デフォルト）
-    # dma_rt:     DMAスレッドをSCHED_FIFO(low)に昇格するか（デフォルトOFF）
-    # ring_count: チャンネルあたりのring bufferスロット数（2の累乗、デフォルト131072≈24MB/ch）
-    # lnb:        LNB電源レベル（0:OFF 1:+11V 2:+15V）
-    # debug:      デバッグログレベル（0〜7）
-
-アンロード
-
-    sudo rmmod pt1_drv
+sudo insmod pt1_drv.ko dma_cpu=2 dma_rt=1 ring_count=65536
+# dma_cpu:    DMA/watchdogスレッドを固定するCPU番号（-1=無効、デフォルト）
+# dma_rt:     DMAスレッドをSCHED_FIFO(low)に昇格するか（デフォルトOFF）
+# ring_count: チャンネルあたりのring bufferスロット数（2の累乗、デフォルト131072≈24MB/ch）
+# lnb:        LNB電源レベル（0:OFF 1:+11V 2:+15V）
+# debug:      デバッグログレベル（0〜7）
 
 動作確認環境:
 Ubuntu 26.04.1 LTS (Resolute Raccoon) x86_64 GNU/Linux Linux 7.0.0-31-generic SMP
