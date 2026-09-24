@@ -18,6 +18,7 @@
 #include <linux/mutex.h>
 #include <linux/spinlock.h>
 #include <linux/atomic.h>
+#include <linux/kref.h>
 #include <linux/sched.h>
 #include <linux/sched/rt.h>
 #include <linux/uaccess.h>
@@ -208,6 +209,16 @@ typedef struct  _pt1_device{
         bool                    device_dead;            /* true: 永続的障害、recover 停止 */
         /* debugfs */
         struct dentry           *debugfs_dir;
+        /*
+         * FIX: 参照カウント。remove_one() は open 中のファイル記述子の
+         * 有無に関わらず無条件に kfree() していたため、通常の rmmod は
+         * .owner 参照でガードされるが、PCI 単体の強制切り離し
+         * (echo 1 > .../remove) は module refcount を経由せず .remove()
+         * を直接呼ぶため、開いたままの fd 経由で Use-After-Free に
+         * なり得た。各 channel が1つ、自分自身の初期所有分として1つ、
+         * それぞれこの参照を持つ。0 になった時点で実際に kfree() する。
+         */
+        struct kref             refcount ;
 } PT1_DEVICE;
 
 typedef struct  _MICRO_PACKET{
@@ -258,6 +269,13 @@ struct  _PT1_CHANNEL{
         u32                     max_fill;               /* ring 最大使用スロット数 */
         atomic_t                overflow_ring;          /* ring full による drop 回数 */
         atomic_t                underrun_count;         /* read() 時に ring 空だった回数 */
+        /*
+         * FIX: channel 単位の参照カウント。open() が保持している間は
+         * remove_one() が来ても実メモリ解放を遅延させ、Use-After-Free を防ぐ。
+         * device 側の refcount(dev_conf->refcount) の1つ分もこの channel が
+         * 保持しており、channel が最終的に解放される時に一緒に返す。
+         */
+        struct kref             refcount ;
         /*
          * ring occupancy histogram: DMA write 時に fill level を 4 段階に記録。
          * [0]: 0〜25%  [1]: 25〜50%  [2]: 50〜75%  [3]: 75〜100%
@@ -978,12 +996,43 @@ static int pt1_watchdog(void *data)
         }
         return 0;
 }
+
+/*
+ * FIX: kref release callback 群。
+ *
+ * pt1_device_free: PT1_DEVICE 自体の解放。dev_conf->refcount が 0 に
+ * なった時点(remove_one() 自身の所有分 + 全 channel が解放済み)で
+ * 呼ばれる。
+ *
+ * pt1_channel_free: PT1_CHANNEL の解放。channel->refcount が 0 に
+ * なった時点(remove_one() の所有分が返却され、かつ open 中の
+ * fd が全て close 済み)で呼ばれる。解放の最後に、この channel が
+ * 保持していた dev_conf 側の参照も返す。
+ */
+static void pt1_device_free(struct kref *kref)
+{
+        PT1_DEVICE *dev_conf = container_of(kref, PT1_DEVICE, refcount);
+        kfree(dev_conf);
+}
+
+static void pt1_channel_free(struct kref *kref)
+{
+        PT1_CHANNEL *channel = container_of(kref, PT1_CHANNEL, refcount);
+        PT1_DEVICE  *dev_conf = channel->ptr;
+
+        if (channel->ring.buffer)
+                vfree(channel->ring.buffer);
+        kfree(channel);
+        kref_put(&dev_conf->refcount, pt1_device_free);
+}
+
 static int pt1_open(struct inode *inode, struct file *file)
 {
         int             major = imajor(inode);
         int             minor = iminor(inode);
         int             lp ;
         int             lp2 ;
+        int             rc ;
         PT1_CHANNEL     *channel ;
 
         for(lp = 0 ; lp < MAX_PCI_DEVICE ; lp++){
@@ -1002,44 +1051,96 @@ static int pt1_open(struct inode *inode, struct file *file)
                                 return -EIO;
                         }
 
+                        /*
+                         * FIX: 以前は内側ループの各分岐でそれぞれ
+                         * mutex_unlock() していたため、minor に一致する
+                         * channel が(本来あり得ないはずだが)見つからずに
+                         * ループが完走した場合、mutex_unlock() を一度も
+                         * 通らずに関数を抜けてしまい、device[lp]->lock が
+                         * 永久にロックされたままになっていた。それ以降、
+                         * そのカードのどのチャンネルへの open() も
+                         * 二度と取得できないロックを待ち続けて無限に
+                         * ブロックする(実際に recisdb の複数プロセスが
+                         * hung_task として検知された)。
+                         *
+                         * さらに重大な問題として、この device[lp]->lock を
+                         * 保持したまま set_sleepmode()(内部で同じ
+                         * channel->ptr->lock == device[lp]->lock を
+                         * mutex_lock() する)を呼んでいたため、同一スレッドに
+                         * よる同一mutexの二重ロックで確実に自己デッドロック
+                         * していた(前回の修正でchannel->lockから
+                         * channel->ptr->lockに統一した際に作り込んでしまった
+                         * リグレッション)。pt1_release()は先にunlockしてから
+                         * set_sleepmode()を呼んでおり問題なかったが、
+                         * pt1_open()だけこの順序になっていなかった。
+                         *
+                         * 対策: device[lp]->lock は「どのchannelを使うか
+                         * 決定し、valid=TRUEで確保する」という短い区間だけ
+                         * 保持し、いったん解放してから set_sleepmode() を
+                         * 呼ぶ。valid=TRUE は既にロック内で立てているので、
+                         * 他スレッドの二重openはロック解放後も防がれている。
+                         */
+                        rc = -EIO ;
+                        channel = NULL ;
                         mutex_lock(&device[lp]->lock);
                         for(lp2 = 0 ; lp2 < MAX_CHANNEL ; lp2++){
-                                channel = device[lp]->channel[lp2] ;
-                                if(channel->minor == minor){
-                                        if(channel->valid == TRUE){
-                                                mutex_unlock(&device[lp]->lock);
-                                                return -EIO ;
+                                PT1_CHANNEL *cand = device[lp]->channel[lp2] ;
+                                if(cand != NULL && cand->minor == minor){
+                                        if(cand->valid == TRUE){
+                                                rc = -EIO ;
+                                        }else{
+                                                WRITE_ONCE(cand->valid, TRUE);
+                                                channel = cand ;
+                                                rc = 0 ;
                                         }
-
-                                        /* wake tuner up */
-                                        set_sleepmode(channel->ptr->regs, &channel->lock,
-                                                                  channel->address, channel->type,
-                                                                  TYPE_WAKEUP);
-                                        msleep(100);
-
-                                        atomic_set(&channel->drop, 0);
-                                        WRITE_ONCE(channel->valid, TRUE);
-                                        atomic_set(&channel->overflow, 0);
-                                        WRITE_ONCE(channel->counetererr, 0);
-                                        WRITE_ONCE(channel->transerr, 0);
-                                        channel->packet_size = 0 ;
-                                        /*
-                                         * FIX: close中にたまたま sync_hunting 中だった場合、
-                                         * hunt_buf に前セッションの古い断片データが残った
-                                         * ままになる。reset_dma() と同じ理由で、再オープン時
-                                         * にもここでリセットしないと、再開後の新しいバイト列と
-                                         * 継ぎ足されて偽の同期一致を誤検出しかねない。
-                                         */
-                                        channel->sync_hunting = false;
-                                        channel->hunt_size = 0;
-                                        file->private_data = channel;
-                                        /* ring buffer リセット (open 時に head/tail を揃える) */
-                                        WRITE_ONCE(channel->ring.head, 0);
-                                        WRITE_ONCE(channel->ring.tail, 0);
-                                        mutex_unlock(&device[lp]->lock);
-                                        return 0 ;
+                                        break ;
                                 }
                         }
+                        mutex_unlock(&device[lp]->lock);
+
+                        if(rc != 0){
+                                return rc ;
+                        }
+
+                        /* wake tuner up */
+                        /*
+                         * FIX: device[lp]->lock を手放した状態で呼ぶ。
+                         * set_sleepmode() は内部で i2c_write() を呼び、
+                         * dev_conf->regs (TS_TEST_ENABLE_ADDR/I2C_RESULT_ADDR
+                         * が同一アドレス 0x08) にアクセスする。channel->lock
+                         * (チャンネル単位)ではなく、他の全 I2C アクセスと
+                         * 同じ channel->ptr->lock (デバイス単位)で保護する。
+                         */
+                        set_sleepmode(channel->ptr->regs, &channel->ptr->lock,
+                                                  channel->address, channel->type,
+                                                  TYPE_WAKEUP);
+                        msleep(100);
+
+                        atomic_set(&channel->drop, 0);
+                        atomic_set(&channel->overflow, 0);
+                        WRITE_ONCE(channel->counetererr, 0);
+                        WRITE_ONCE(channel->transerr, 0);
+                        channel->packet_size = 0 ;
+                        /*
+                         * FIX: close中にたまたま sync_hunting 中だった場合、
+                         * hunt_buf に前セッションの古い断片データが残った
+                         * ままになる。reset_dma() と同じ理由で、再オープン時
+                         * にもここでリセットしないと、再開後の新しいバイト列と
+                         * 継ぎ足されて偽の同期一致を誤検出しかねない。
+                         */
+                        channel->sync_hunting = false;
+                        channel->hunt_size = 0;
+                        file->private_data = channel;
+                        /*
+                         * FIX: この fd が close されるまで channel の実メモリを
+                         * 解放させないための参照。pt1_release() で対になる
+                         * kref_put() を行う。
+                         */
+                        kref_get(&channel->refcount);
+                        /* ring buffer リセット (open 時に head/tail を揃える) */
+                        WRITE_ONCE(channel->ring.head, 0);
+                        WRITE_ONCE(channel->ring.tail, 0);
+                        return 0 ;
                 }
         }
         return -EIO;
@@ -1047,22 +1148,40 @@ static int pt1_open(struct inode *inode, struct file *file)
 static int pt1_release(struct inode *inode, struct file *file)
 {
         PT1_CHANNEL     *channel = file->private_data;
+        bool            dead = smp_load_acquire(&channel->ptr->device_dead);
 
-        mutex_lock(&channel->ptr->lock);
-        SetStream(channel->ptr->regs, channel->channel, FALSE);
-        WRITE_ONCE(channel->valid, FALSE);
-        printk(KERN_INFO "(%d:%d)Drop=%08d:%08d:%08d:%08d\n", imajor(inode), iminor(inode), atomic_read(&channel->drop),
-                                                atomic_read(&channel->overflow), channel->counetererr, channel->transerr);
-        atomic_set(&channel->overflow, 0);
-        WRITE_ONCE(channel->counetererr, 0);
-        WRITE_ONCE(channel->transerr, 0);
-        atomic_set(&channel->drop, 0);
-        mutex_unlock(&channel->ptr->lock);
+        /*
+         * FIX: device_dead ならハードウェアは既に remove_one() で
+         * iounmap() 済みの可能性があるため、regs への読み書きは一切
+         * 行わない。フラグのクリアと参照返却だけ行う。
+         */
+        if (!dead) {
+                mutex_lock(&channel->ptr->lock);
+                SetStream(channel->ptr->regs, channel->channel, FALSE);
+                WRITE_ONCE(channel->valid, FALSE);
+                printk(KERN_INFO "(%d:%d)Drop=%08d:%08d:%08d:%08d\n", imajor(inode), iminor(inode), atomic_read(&channel->drop),
+                                                        atomic_read(&channel->overflow), channel->counetererr, channel->transerr);
+                atomic_set(&channel->overflow, 0);
+                WRITE_ONCE(channel->counetererr, 0);
+                WRITE_ONCE(channel->transerr, 0);
+                atomic_set(&channel->drop, 0);
+                mutex_unlock(&channel->ptr->lock);
 
-        /* send tuner to sleep */
-        set_sleepmode(channel->ptr->regs, &channel->lock,
-                                  channel->address, channel->type, TYPE_SLEEP);
-        msleep(100);
+                /* send tuner to sleep */
+                /* FIX: pt1_open()と同じ理由でchannel->ptr->lock(デバイス単位)を使う */
+                set_sleepmode(channel->ptr->regs, &channel->ptr->lock,
+                                          channel->address, channel->type, TYPE_SLEEP);
+                msleep(100);
+        } else {
+                WRITE_ONCE(channel->valid, FALSE);
+        }
+
+        /*
+         * FIX: pt1_open() で取得した参照を返す。remove_one() が
+         * 既に自分の分を返却済みで、これが最後の参照なら
+         * ここで実際に vfree/kfree される。
+         */
+        kref_put(&channel->refcount, pt1_channel_free);
 
         return 0;
 }
@@ -1111,22 +1230,71 @@ static ssize_t pt1_read(struct file *file, char __user *buf, size_t cnt, loff_t 
                  * blocking: WAKEUP_WATERMARK 分溜まるまで待つ。
                  * poll/epoll も wait_queue を共有するので
                  * wake_up_interruptible_poll と対になっている。
+                 *
+                 * FIX: 以前は待ち条件に `|| signal_pending(current)` を
+                 * 混ぜていたため、シグナル到着時に
+                 * wait_event_interruptible_timeout() が「条件成立」と
+                 * 誤認して正の値(残り時間)を返してしまい、本来
+                 * このマクロが持つ -ERESTARTSYS 返却経路に到達しなかった。
+                 * さらに戻り値も一切チェックしていなかったため、
+                 * シグナル割込みとタイムアウト(データ未着)の区別がつかず、
+                 * 後段で avail==0 のまま read(2) の EOF(0) を誤って
+                 * 返してしまっていた(呼び出し元がストリーム終端と誤認し、
+                 * 弱電界等で一時的にデータが来ないだけなのに録画が
+                 * 打ち切られかねなかった)。
+                 *
+                 * signal_pending() は条件から外してマクロ自身の
+                 * シグナル検知(-ERESTARTSYS)に任せ、タイムアウトのみで
+                 * データが溜まっていない場合はブロッキング read 本来の
+                 * 意味通りループして待ち直す。
                  */
-                wait_event_interruptible_timeout(channel->wait_q,
-                        ({
-                                head = smp_load_acquire(&ring->head);
-                                ((head - READ_ONCE(ring->tail) + ring_count)
-                                        & ring_mask) >= WAKEUP_WATERMARK;
-                        }) || signal_pending(current),
-                        msecs_to_jiffies(500));
+                for (;;) {
+                        long wait_ret = wait_event_interruptible_timeout(channel->wait_q,
+                                ({
+                                        head = smp_load_acquire(&ring->head);
+                                        (((head - READ_ONCE(ring->tail) + ring_count)
+                                                & ring_mask) >= WAKEUP_WATERMARK) ||
+                                        smp_load_acquire(&channel->ptr->device_dead);
+                                }),
+                                msecs_to_jiffies(500));
+                        if (wait_ret < 0) {
+                                /* シグナルによる中断 */
+                                return -ERESTARTSYS;
+                        }
+
+                        /*
+                         * FIX: device_dead はここでも真っ先に見る。
+                         * wake_up_all() は条件を満たしたタスクを再評価
+                         * させるだけなので、device_dead を待ち条件式
+                         * (上記 ({...}) の中)に含めておかないと、
+                         * remove_one() が起こしても条件が偽のまま
+                         * また最大500ms寝てしまう。
+                         */
+                        if (unlikely(smp_load_acquire(&channel->ptr->device_dead)))
+                                return -EIO;
+
+                        head  = smp_load_acquire(&ring->head);
+                        avail = (head - READ_ONCE(ring->tail) + ring_count) & ring_mask;
+                        if (avail > 0)
+                                break;
+
+                        /* まだデータなし。状態が変化していないか確認してから待ち直す */
+                        if (unlikely(smp_load_acquire(&channel->ch_recovering)))
+                                return -EAGAIN;
+                        atomic_inc(&channel->underrun_count);
+                }
         }
 
         head  = smp_load_acquire(&ring->head);
         avail = (head - READ_ONCE(ring->tail) + ring_count) & ring_mask;
 
         if (avail == 0) {
+                /*
+                 * ここに来るのは O_NONBLOCK でデータがない場合のみ
+                 * (blocking 分岐は上のループでデータが来るまで抜けない)。
+                 */
                 atomic_inc(&channel->underrun_count);
-                return 0;
+                return -EAGAIN;
         }
 
         /*
@@ -1137,11 +1305,31 @@ static ssize_t pt1_read(struct file *file, char __user *buf, size_t cnt, loff_t 
         to_copy = min_t(u32, avail, (u32)(cnt / PACKET_SIZE));
 
         while (to_copy > 0) {
-                u32 tail    = READ_ONCE(ring->tail);
-                /* ring 末端までの連続スロット数 */
-                u32 contig  = min_t(u32, to_copy, ring_count - tail);
-                size_t bytes = (size_t)contig * PACKET_SIZE;
-                const u8 *src = ring->buffer + tail * PACKET_SIZE;
+                unsigned long flags;
+                u32 tail, contig;
+                size_t bytes;
+                const u8 *src;
+
+                /*
+                 * FIX: producer(pt1_ring_write)側の overflow 処理は
+                 * overflow_lock 保護下で ring->tail を進めるが、consumer
+                 * (ここ)側の tail 更新はロックなしの WRITE_ONCE だけだった。
+                 * ring が完全に埋まるほど consumer が遅れた場合にのみ
+                 * 発生する極めて稀なケースだが、producer の overflow 処理と
+                 * ここでの tail 書き込みが競合すると、producer が進めた
+                 * tail をここで巻き戻してしまい、avail の計算が
+                 * 不整合になり得た。読み取り前後で overflow_lock を取り、
+                 * copy_to_user() 中(sleep し得るためロック保持不可)は
+                 * 保持しないようにした上で、書き戻し時に producer が
+                 * 既に tail を進めていないか確認してから書く。
+                 */
+                spin_lock_irqsave(&ring->overflow_lock, flags);
+                tail   = ring->tail;
+                contig = min_t(u32, to_copy, ring_count - tail);
+                spin_unlock_irqrestore(&ring->overflow_lock, flags);
+
+                bytes = (size_t)contig * PACKET_SIZE;
+                src = ring->buffer + tail * PACKET_SIZE;
 
                 /* prefetch: 次の contiguous ブロック先頭をキャッシュに乗せる */
                 prefetch(ring->buffer + ((tail + contig) & ring_mask) * PACKET_SIZE);
@@ -1149,7 +1337,17 @@ static ssize_t pt1_read(struct file *file, char __user *buf, size_t cnt, loff_t 
                 if (copy_to_user(buf + copied, src, bytes))
                         return copied ? (ssize_t)copied : -EFAULT;
 
-                WRITE_ONCE(ring->tail, (tail + contig) & ring_mask);
+                spin_lock_irqsave(&ring->overflow_lock, flags);
+                if (ring->tail == tail) {
+                        /* producer が overflow で tail を進めていなければ通常通り進める */
+                        WRITE_ONCE(ring->tail, (tail + contig) & ring_mask);
+                }
+                /*
+                 * producer が既に進めていた場合は、producer 側の値を
+                 * 優先してここでは書き戻さない(巻き戻し防止)。
+                 */
+                spin_unlock_irqrestore(&ring->overflow_lock, flags);
+
                 copied  += bytes;
                 to_copy -= contig;
         }
@@ -1163,6 +1361,7 @@ static  int             SetFreq(PT1_CHANNEL *channel, FREQUENCY *freq)
                 case CHANNEL_TYPE_ISDB_S:
                         {
                                 ISDB_S_TMCC             tmcc ;
+                                int                     rc ;
                                 if(bs_tune(channel->ptr->regs,
                                                 &channel->ptr->lock,
                                                 channel->address,
@@ -1170,10 +1369,36 @@ static  int             SetFreq(PT1_CHANNEL *channel, FREQUENCY *freq)
                                                 &tmcc) < 0){
                                         return -EIO ;
                                 }
-                                ts_lock(channel->ptr->regs,
-                                                &channel->ptr->lock,
-                                                channel->address,
-                                                tmcc.ts_id[freq->slot].ts_id);
+                                /*
+                                 * FIX: recisdb 等の一部ツールは "--tsid" 指定時、
+                                 * 独自のTSID→slot変換や専用ioctlを使わず、
+                                 * 生のTSID値をそのままこの slot フィールドに
+                                 * 詰めて通常の SET_CHANNEL を呼んでくる
+                                 * (px4_drv 側もこの値を検証なしでそのまま
+                                 * ハードウェアのstream_idロックに渡している)。
+                                 * slot が配列サイズ(MAX_BS_TS_ID=8)未満なら
+                                 * 従来通り「bs_tune()が見つけたTS-ID一覧の
+                                 * インデックス」として扱い、それ以上なら
+                                 * 「生のTSID値」とみなして ts_lock() に
+                                 * 直接渡す(ハードウェアのTS-IDロック自体は
+                                 * 元々生のTSID値で動作するので、この場合
+                                 * bs_tune()が見つけた一覧に含まれている
+                                 * 必要すらない)。
+                                 */
+                                if(freq->slot >= 0 && freq->slot < MAX_BS_TS_ID){
+                                        rc = ts_lock(channel->ptr->regs,
+                                                        &channel->ptr->lock,
+                                                        channel->address,
+                                                        tmcc.ts_id[freq->slot].ts_id);
+                                }else{
+                                        rc = ts_lock(channel->ptr->regs,
+                                                        &channel->ptr->lock,
+                                                        channel->address,
+                                                        (__u16)freq->slot);
+                                }
+                                if(rc < 0){
+                                        return -EIO ;
+                                }
                         }
                         break ;
                 case CHANNEL_TYPE_ISDB_T:
@@ -1185,6 +1410,42 @@ static  int             SetFreq(PT1_CHANNEL *channel, FREQUENCY *freq)
                                         return -EINVAL ;
                                 }
                         }
+        }
+        return 0 ;
+}
+
+/*
+ * FIX: EPGデータ等から得た実際のTSID値を直接指定してロックする関数。
+ * ISDB-S(BS/CS)専用。bs_tune() でトランスポンダの搬送波にロックした後、
+ * ts_id[] 配列から slot を探すのではなく、呼び出し元が渡した TSID値を
+ * そのまま ts_lock() に渡す(ts_lock() 自体がハードウェアに直接指示し
+ * 結果をポーリング確認する作りなので、事前の slot 探索は不要)。
+ * 既存の SetFreq()/SET_CHANNEL とは独立した経路で、既存動作には
+ * 一切影響しない。
+ */
+static  int             SetFreqByTsid(PT1_CHANNEL *channel, FREQUENCY_TSID *freq)
+{
+        ISDB_S_TMCC     tmcc ;
+
+        if(channel->type != CHANNEL_TYPE_ISDB_S){
+                /* TSID直接指定はBS/CS専用。地上波は frequencyno のみで一意に決まる */
+                return -EINVAL ;
+        }
+
+        if(bs_tune(channel->ptr->regs,
+                        &channel->ptr->lock,
+                        channel->address,
+                        freq->frequencyno,
+                        &tmcc) < 0){
+                return -EIO ;
+        }
+
+        if(ts_lock(channel->ptr->regs,
+                        &channel->ptr->lock,
+                        channel->address,
+                        freq->tsid) < 0){
+                /* 指定TSIDがこの周波数に存在しない、あるいはロック失敗 */
+                return -EIO ;
         }
         return 0 ;
 }
@@ -1228,6 +1489,15 @@ static long pt1_do_ioctl(struct file  *file, unsigned int cmd, unsigned long arg
                                 	return -EFAULT;
                                 }
                                 return SetFreq(channel, &freq);
+                        }
+                case SET_CHANNEL_TSID:
+                        {
+                                FREQUENCY_TSID  freq ;
+                                dummy = copy_from_user(&freq, arg, sizeof(FREQUENCY_TSID));
+                                if(dummy) {
+                                	return -EFAULT;
+                                }
+                                return SetFreqByTsid(channel, &freq);
                         }
                 case START_REC:
                         /*
@@ -1642,6 +1912,11 @@ static int pt1_pci_init_one (struct pci_dev *pdev,
                 printk(KERN_ERR "PT1:out of memory !");
                 return -ENOMEM ;
         }
+        /*
+         * FIX: 参照カウント初期化。この時点の1は「remove_one() が
+         * 最後に返す、デバイス自身の所有分」を表す。
+         */
+        kref_init(&dev_conf->refcount);
         for (i = 0; i < DMA_RING_SIZE; i++) {
                 dev_conf->dmactl[i] = kzalloc(sizeof(DMA_CONTROL), GFP_KERNEL);
                 if(!dev_conf->dmactl[i]){
@@ -1649,7 +1924,7 @@ static int pt1_pci_init_one (struct pci_dev *pdev,
                         for (j = 0; j < i; j++) {
                                 kfree(dev_conf->dmactl[j]);
                         }
-                        kfree(dev_conf);
+                        kref_put(&dev_conf->refcount, pt1_device_free);
                         printk(KERN_ERR "PT1:out of memory !");
                         return -ENOMEM ;
                 }
@@ -1757,6 +2032,14 @@ static int pt1_pci_init_one (struct pci_dev *pdev,
 
                 // 共通情報
                 mutex_init(&channel->lock);
+                /*
+                 * FIX: channel の参照カウント初期化。この1は
+                 * 「remove_one() が最後に返す、デバイス自身の所有分」。
+                 * dev_conf 側の参照も1つ確保しておく(この channel が
+                 * 生きている間 dev_conf も生存させるため)。
+                 */
+                kref_init(&channel->refcount);
+                kref_get(&dev_conf->refcount);
                 // 待ち状態を解除
                 WRITE_ONCE(channel->req_dma, FALSE);
                 // マイナー番号設定
@@ -1919,10 +2202,13 @@ out_err_v4l:
         }
         for(lp = 0 ; lp < MAX_CHANNEL ; lp++){
                 if(dev_conf->channel[lp] != NULL){
-                        if(dev_conf->channel[lp]->ring.buffer != NULL){
-                                vfree(dev_conf->channel[lp]->ring.buffer);
-                        }
-                        kfree(dev_conf->channel[lp]);
+                        /*
+                         * FIX: probe 失敗時点ではまだ open() され得ないので
+                         * refcount は必ず1(デバイス自身の所有分のみ)。
+                         * 他のパスと統一するため直接 vfree/kfree ではなく
+                         * kref_put() 経由にする。
+                         */
+                        kref_put(&dev_conf->channel[lp]->refcount, pt1_channel_free);
                 }
         }
         /*
@@ -1936,12 +2222,24 @@ out_err_v4l:
 out_err_fpga:
         writel(0xb0b0000, dev_conf->regs);
         writel(0, dev_conf->regs + CFG_REGS_ADDR);
+        /*
+         * FIX: xc3s_init()/tuner_init() 失敗でここに来る場合、既に
+         * i2c_state_table にエントリが作られている可能性がある
+         * (tuner_init が i2c_write/i2c_read を呼ぶため)。remove_one() と
+         * 同様にここでも解放する。
+         */
+        release_i2c_state(dev_conf->regs);
         iounmap(dev_conf->regs);
         release_mem_region(dev_conf->mmio_start, dev_conf->mmio_len);
         for (i = 0; i < DMA_RING_SIZE; i++) {
                 kfree(dev_conf->dmactl[i]);
         }
-        kfree(dev_conf);
+        /*
+         * FIX: この時点では channel は作られていない(あるいは全て
+         * kref_put 済み)ので refcount は必ず1。他パスと統一するため
+         * kref_put() 経由にする。
+         */
+        kref_put(&dev_conf->refcount, pt1_device_free);
 out_err_regbase:
         /*
          * FIX: request_mem_region() / ioremap() 失敗時にここへ来るが、
@@ -1950,7 +2248,7 @@ out_err_regbase:
          */
         for (i = 0; i < DMA_RING_SIZE; i++)
                 kfree(dev_conf->dmactl[i]);
-        kfree(dev_conf);
+        kref_put(&dev_conf->refcount, pt1_device_free);
         return -EIO;
 
 }
@@ -1965,6 +2263,18 @@ static void pt1_pci_remove_one(struct pci_dev *pdev)
 
         if(dev_conf){
                 pt1_debugfs_remove(dev_conf);
+
+                /*
+                 * FIX: device_dead を立てずに wake_up_all() だけ呼んでいた。
+                 * pt1_read() は起こされても device_dead/シグナル/データ到着の
+                 * いずれも無ければループして再度待ち直す設計(誤ったEOF返却の
+                 * 修正と対になっている)なので、device_dead を立てずに
+                 * 起こすだけだと、ブロック中の read() がまた最大500ms
+                 * 寝てしまい、rmmod/PCI取り外し時の解放が遅延しかねなかった。
+                 * wake_up_all() の前に device_dead を立てて、起きた read() が
+                 * 即座に -EIO で抜けられるようにする。
+                 */
+                smp_store_release(&dev_conf->device_dead, true);
 
                 /*
                  * kthread_stop() の前に全 waitqueue を起こす。
@@ -2003,9 +2313,16 @@ static void pt1_pci_remove_one(struct pci_dev *pdev)
                 for(lp = 0 ; lp < MAX_CHANNEL ; lp++){
                         if(dev_conf->channel[lp] != NULL){
                                 cdev_del(&dev_conf->cdev[lp]);
-                                if(dev_conf->channel[lp]->ring.buffer != NULL)
-                                        vfree(dev_conf->channel[lp]->ring.buffer);
-                                kfree(dev_conf->channel[lp]);
+                                /*
+                                 * FIX: open 中の fd が残っていれば(通常の rmmod では
+                                 * 起こらないが、PCI 単体の強制切り離しでは module
+                                 * refcount を経由しないため起こり得る)、実メモリの
+                                 * 解放は pt1_release() が最後の参照を返すまで
+                                 * 遅延される。device_dead は既に立ててあるので、
+                                 * その fd に対する以降の read/ioctl/poll/release は
+                                 * regs に一切触れずに安全に抜ける。
+                                 */
+                                kref_put(&dev_conf->channel[lp]->refcount, pt1_channel_free);
                         }
                         device_destroy(pt1video_class,
                                        MKDEV(MAJOR(dev_conf->dev),
@@ -2017,12 +2334,28 @@ static void pt1_pci_remove_one(struct pci_dev *pdev)
                 writel(0, dev_conf->regs + CFG_REGS_ADDR);
                 settuner_reset(dev_conf->regs, dev_conf->cardtype, LNB_OFF, TUNER_POWER_OFF);
                 release_mem_region(dev_conf->mmio_start, dev_conf->mmio_len);
+                /*
+                 * FIX: i2c_state_table(pt1_i2c.c) に regs をキーとして残った
+                 * エントリを解放する。これをしないと rmmod/insmod を
+                 * 繰り返すたびにテーブルが埋まっていき、
+                 * MAX_I2C_DEVICES(8) 回を超えると以降のカードが
+                 * 無関係な既存エントリを共有してしまう。
+                 */
+                release_i2c_state(dev_conf->regs);
                 iounmap(dev_conf->regs);
                 for (i = 0; i < DMA_RING_SIZE; i++) {
                         kfree(dev_conf->dmactl[i]);
                 }
                 device[dev_conf->card_number] = NULL;
-                kfree(dev_conf);
+                /*
+                 * FIX: 無条件 kfree() ではなく、remove_one() 自身が持つ
+                 * 「デバイス自身の所有分」の参照を返すだけにする。
+                 * open 中の channel が残っていれば、それらが dev_conf 側の
+                 * 参照も保持しているため、全て close されるまで dev_conf は
+                 * 生存する(その間 regs/dmactl はダングリングになるが、
+                 * device_dead ガードにより誰も参照しない)。
+                 */
+                kref_put(&dev_conf->refcount, pt1_device_free);
         }
         pci_set_drvdata(pdev, NULL);
 }
