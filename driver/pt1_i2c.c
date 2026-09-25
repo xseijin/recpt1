@@ -1,6 +1,7 @@
 /***************************************************************************/
 /* I2C情報作成                                                             */
 /***************************************************************************/
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/errno.h>
@@ -63,7 +64,7 @@ static	int		*get_i2c_state(void __iomem *regs)
 
 	if(!ret){
 		// 想定外の搭載枚数。best-effort でslot0を共有する。
-		printk(KERN_WARNING "PT1:i2c state table full, sharing state (regs=%p)\n", regs);
+		pr_warn("i2c state table full, sharing state (regs=%p)\n", regs);
 		ret = &i2c_state_table[0].state ;
 	}
 	return ret ;
@@ -182,7 +183,7 @@ BIT 17, 17+8 ON
 	for(lp = 0; lp < phase; lp++){
 		rc = i2c_lock_one(regs, WRITE_RAM_ENABLE, RAM_SHIFT);
 		if(rc < 0){
-			printk(KERN_ERR "PT1:LOCK FALUT\n");
+			pr_err("LOCK FAULT\n");
 			return rc ;
 		}
 	}
@@ -260,7 +261,7 @@ static	int		i2c_lock_one(void __iomem *regs, __u32 firstval, __u32 lockval)
 		}
 		schedule_timeout_uninterruptible(msecs_to_jiffies(1));
 	}
-	printk(KERN_INFO "PT1:Lock Fault(%x:%x)\n", val, val2);
+	pr_warn("Lock Fault(%x:%x)\n", val, val2);
 	return -EIO ;
 }
 static	int		i2c_unlock(void __iomem *regs, int lockval)
@@ -513,11 +514,11 @@ void	i2c_write(void __iomem *regs, struct mutex *lock, WBLOCK *wblock)
 	// ロックする
 	mutex_lock(lock);
 #if 0
-	printk(KERN_INFO "Addr=%x(%d)\n", wblock->addr, wblock->count);
+	pr_info("Addr=%x(%d)\n", wblock->addr, wblock->count);
 	for(lp = 0 ; lp  < wblock->count ; lp++){
-		printk(KERN_INFO "%x\n", wblock->value[lp]);
+		pr_info("%x\n", wblock->value[lp]);
 	}
-	printk(KERN_INFO "\n");
+	pr_info("\n");
 #endif
 
 	blockwrite(regs, wblock);
@@ -549,11 +550,11 @@ __u32	i2c_read(void __iomem *regs, struct mutex *lock, WBLOCK *wblock, int size)
 	// ロックする
 	mutex_lock(lock);
 #if 0
-	printk(KERN_INFO "Addr=%x:%d:%d\n", wblock->addr, wblock->count, size);
+	pr_info("Addr=%x:%d:%d\n", wblock->addr, wblock->count, size);
 	for(lp = 0 ; lp  < wblock->count ; lp++){
-		printk(KERN_INFO "%x\n", wblock->value[lp]);
+		pr_info("%x\n", wblock->value[lp]);
 	}
-	printk(KERN_INFO "\n");
+	pr_info("\n");
 #endif
 	blockread(regs, wblock, size);
 

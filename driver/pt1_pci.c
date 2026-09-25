@@ -7,6 +7,7 @@
  * つまり完全に無意味な定義で、毎回ビルド時に
  * "DRV_NAME redefined" 警告を出すだけの死んだコードだった。削除する。
  */
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 #include "version.h"
 
 #include <linux/module.h>
@@ -66,7 +67,7 @@ MODULE_LICENSE("GPL");
  *   2: 詳細。1 + 同期ロスト、スレッド起動、デバイスポインタ等の診断メッセージ
  * 以前は宣言のみで参照箇所がなく、値は何も制御していなかった。
  */
-static int debug = 1;
+int pt1_debug = 1;
 static int lnb = 0;                     /* LNB OFF:0 +11V:1 +15V:2 */
 static int dma_cpu = -1;                /* DMA/watchdog thread を固定する CPU 番号。-1=無効
                                          * N100 等 録画専用機では isolcpus と合わせて設定すると効果的。
@@ -84,7 +85,7 @@ static bool dma_rt = false;             /* DMA thread を SCHED_FIFO(low) に昇
 static unsigned int ring_count = 131072;
 static unsigned int ring_mask  = 131071;        /* ring_count - 1, pt1_pci_init() で更新 */
 
-module_param(debug, int, 0644);
+module_param_named(debug, pt1_debug, int, 0644);
 module_param(lnb, int, 0);
 module_param(dma_cpu, int, 0444);
 module_param(dma_rt, bool, 0644);
@@ -95,18 +96,6 @@ MODULE_PARM_DESC(dma_cpu, "CPU number to pin DMA/watchdog threads (-1=no pinning
 MODULE_PARM_DESC(dma_rt, "Elevate DMA thread to SCHED_FIFO(low) (default=0/OFF, use with caution on N100)");
 MODULE_PARM_DESC(ring_count, "Ring buffer slots per channel (default=131072=~24MB/ch, must be power of 2)");
 /* NOTE: 元コードは MODULE_PARM_DESC(debug, ...) が2回あったため lnb 側を修正 */
-
-/* debug >= lvl のときだけ出力する。_rl は ratelimit 付き(録画中に繰り返し出るもの用) */
-#define pt1_log(lvl, fmt, ...) \
-	do { \
-		if (READ_ONCE(debug) >= (lvl)) \
-			printk(KERN_INFO fmt, ##__VA_ARGS__); \
-	} while (0)
-#define pt1_log_rl(lvl, fmt, ...) \
-	do { \
-		if (READ_ONCE(debug) >= (lvl)) \
-			printk_ratelimited(KERN_INFO fmt, ##__VA_ARGS__); \
-	} while (0)
 
 #define VENDOR_EARTHSOFT 0x10ee
 #define PCI_PT1_ID 0x211a
@@ -362,7 +351,7 @@ static int pt1_wait_dma_idle(PT1_DEVICE *dev)
                         return 0;
                 udelay(10);
         }
-        pr_err("pt1: pt1_wait_dma_idle: timeout\n");
+        pr_err("pt1_wait_dma_idle: timeout\n");
         return -ETIMEDOUT;
 }
 
@@ -404,7 +393,7 @@ static int pt1_dma_recover(PT1_DEVICE *dev, enum pt1_recover_reason reason)
         case PT1_RECOVER_TIMEOUT:     atomic64_inc(&dev->recover_timeout);    break;
         }
 
-        pr_warn_ratelimited("pt1: card%d dma_recover reason=%s counter=%lld recover=%lld streak=%d\n",
+        pr_warn_ratelimited("card%d dma_recover reason=%s counter=%lld recover=%lld streak=%d\n",
                      dev->card_number,
                      reason_str[reason],
                      atomic64_read(&dev->dma_counter),
@@ -423,7 +412,7 @@ static int pt1_dma_recover(PT1_DEVICE *dev, enum pt1_recover_reason reason)
         pt1_dma_stop(dev);
 
         if (pt1_wait_dma_idle(dev)) {
-                pr_err("pt1: DMA did not go idle, forcing reset\n");
+                pr_err("DMA did not go idle, forcing reset\n");
                 atomic64_inc(&dev->recover_timeout);
                 rc = -ETIMEDOUT;
                 /* timeout は失敗扱いにして streak をインクリメント */
@@ -453,7 +442,7 @@ update_streak:
                  */
                 dev->recover_fail_streak++;
                 if (dev->recover_fail_streak >= 10) {
-                        pr_err("pt1: card%d: %d consecutive recover failures, "
+                        pr_err("card%d: %d consecutive recover failures, "
                                "marking device dead\n",
                                dev->card_number, dev->recover_fail_streak);
                         smp_store_release(&dev->device_dead, true);
@@ -472,7 +461,7 @@ update_streak:
                 } else {
                         unsigned long backoff = HZ << min(dev->recover_fail_streak - 1, 6);
                         WRITE_ONCE(dev->recover_backoff_until, jiffies + backoff);
-                        pr_warn("pt1: card%d: recover failed (streak=%d), "
+                        pr_warn("card%d: recover failed (streak=%d), "
                                 "backoff %ums\n",
                                 dev->card_number, dev->recover_fail_streak,
                                 jiffies_to_msecs(backoff));
@@ -621,8 +610,8 @@ static void pt1_ring_write(PT1_CHANNEL *channel, const u8 *pkt)
                 if (unlikely(used * 4 >= ring_count * 3)) {
                         if (!READ_ONCE(channel->ring_high_warned)) {
                                 WRITE_ONCE(channel->ring_high_warned, true);
-                                if (READ_ONCE(debug) >= 1)
-                                        pr_warn_ratelimited("pt1: ring high ch=%u fill=%u/%u (>=75%%), consumer too slow?\n",
+                                if (READ_ONCE(pt1_debug) >= 1)
+                                        pr_warn_ratelimited("ring high ch=%u fill=%u/%u (>=75%%), consumer too slow?\n",
                                                             channel->channel, used, ring_count);
                         }
                 } else if (unlikely(READ_ONCE(channel->ring_high_warned) &&
@@ -734,7 +723,7 @@ static  int             pt1_thread(void *data)
 
                         /* --- descriptor validity check --- */
                         if (unlikely(dataptr == NULL)) {
-                                pr_err("pt1: NULL descriptor at ring=%d data=%d\n",
+                                pr_err("NULL descriptor at ring=%d data=%d\n",
                                        ring_pos, data_pos);
                                 channel = dev_conf->channel[0];
                                 if (channel) atomic_inc(&channel->drop);
@@ -772,13 +761,13 @@ static  int             pt1_thread(void *data)
                                 /* dma_channel は 1〜4 が有効。0 はパディング、5以上は不正 */
                                 if(dma_channel == 0 || dma_channel > MAX_CHANNEL){
                                         if(dma_channel != 0)
-                                                printk(KERN_ERR "DMA Channel Number Error(%d)\n", dma_channel);
+                                                pr_err("DMA Channel Number Error(%d)\n", dma_channel);
                                         continue ;
                                 }
                                 chno = real_channel[dma_channel - 1];
                                 packet_pos = ((micro.packet.head >> 2) & 0x07);
                                 if (unlikely(chno >= MAX_CHANNEL || dev_conf->channel[chno] == NULL)) {
-                                        pr_err_ratelimited("pt1: invalid chno=%d dma_channel=%d\n",
+                                        pr_err_ratelimited("invalid chno=%d dma_channel=%d\n",
                                                            chno, dma_channel);
                                         continue;
                                 }
@@ -861,7 +850,7 @@ static  int             pt1_thread(void *data)
                                                         channel->packet_size = remain;
                                                         channel->sync_hunting = false;
 
-                                                        pr_info_ratelimited("pt1: ch=%d TS re-sync OK (off=%d, %u packets recovered)\n",
+                                                        pr_info_ratelimited("ch=%d TS re-sync OK (off=%d, %u packets recovered)\n",
                                                                             channel->channel, off, nfull);
                                                         if (nfull)
                                                                 pt1_channel_wakeup(channel);
@@ -895,7 +884,7 @@ static  int             pt1_thread(void *data)
                                                  * このパケット自体の内容は信頼できないため破棄する。
                                                  */
                                                 atomic64_inc(&dev_conf->sync_loss);
-                                                pt1_log_rl(2, "pt1: sync loss ch=%d sync_loss=%lld drop=%d, entering hunt\n",
+                                                pt1_log_rl(2, "sync loss ch=%d sync_loss=%lld drop=%d, entering hunt\n",
                                                              channel->channel,
                                                              atomic64_read(&dev_conf->sync_loss),
                                                              atomic_read(&channel->drop));
@@ -1022,7 +1011,7 @@ static int pt1_watchdog(void *data)
                         if (!time_after(jiffies, READ_ONCE(dev_conf->last_dma_jiffies) + HZ * 10))
                                 continue;
 
-                        pr_err_ratelimited("pt1: DMA stall detected (counter=%lld), recovering\n", cur);
+                        pr_err_ratelimited("DMA stall detected (counter=%lld), recovering\n", cur);
                         pt1_dma_recover(dev_conf, PT1_RECOVER_STALL);
 
                         /* recover 後 5秒のクールダウン: DMA 再起動が安定するまで待つ */
@@ -1083,7 +1072,7 @@ static int pt1_open(struct inode *inode, struct file *file)
 
                         /* device_dead: 永続的障害。open から -EIO を返して userspace に通知 */
                         if (smp_load_acquire(&device[lp]->device_dead)) {
-                                pr_warn("pt1: card%d: open rejected, device is dead\n",
+                                pr_warn("card%d: open rejected, device is dead\n",
                                         device[lp]->card_number);
                                 return -EIO;
                         }
@@ -1196,8 +1185,17 @@ static int pt1_release(struct inode *inode, struct file *file)
                 mutex_lock(&channel->ptr->lock);
                 SetStream(channel->ptr->regs, channel->channel, FALSE);
                 WRITE_ONCE(channel->valid, FALSE);
-                printk(KERN_INFO "(%d:%d)Drop=%08d:%08d:%08d:%08d\n", imajor(inode), iminor(inode), atomic_read(&channel->drop),
-                                                        atomic_read(&channel->overflow), channel->counetererr, channel->transerr);
+                /* 異常(drop/overflow/エラー)があれば通常レベル、なければ詳細レベルのみ出力 */
+                {
+                        int st_drop = atomic_read(&channel->drop);
+                        int st_ovf = atomic_read(&channel->overflow);
+                        int st_cerr = channel->counetererr;
+                        int st_terr = channel->transerr;
+
+                        pt1_log((st_drop || st_ovf || st_cerr || st_terr) ? 1 : 2,
+                                "(%d:%d)Drop=%08d:%08d:%08d:%08d\n",
+                                imajor(inode), iminor(inode), st_drop, st_ovf, st_cerr, st_terr);
+                }
                 atomic_set(&channel->overflow, 0);
                 WRITE_ONCE(channel->counetererr, 0);
                 WRITE_ONCE(channel->transerr, 0);
@@ -1407,7 +1405,7 @@ static  int             SetFreq(PT1_CHANNEL *channel, FREQUENCY *freq)
                                         return -EIO ;
                                 }
                                 /* debug>=2: このトランスポンダでチューナーが読み取った相対TS番号ごとのTS-ID(0xFFFF=なし) */
-                                pt1_log(2, "PT1:BS freq=%d slot=%d ts_id[0..7]=%04x %04x %04x %04x %04x %04x %04x %04x\n",
+                                pt1_log(2, "BS freq=%d slot=%d ts_id[0..7]=%04x %04x %04x %04x %04x %04x %04x %04x\n",
                                         freq->frequencyno, freq->slot,
                                         tmcc.ts_id[0].ts_id, tmcc.ts_id[1].ts_id,
                                         tmcc.ts_id[2].ts_id, tmcc.ts_id[3].ts_id,
@@ -1595,18 +1593,18 @@ static long pt1_do_ioctl(struct file  *file, unsigned int cmd, unsigned long arg
                                  * 文字列として読み、kernel oops を起こし得る。
                                  */
                                 if (lnb_eff < LNB_OFF || lnb_eff > LNB_15V) {
-                                        printk(KERN_ERR "PT1:LNB_ENABLE invalid level(%d)\n", lnb_eff);
+                                        pr_err("LNB_ENABLE invalid level(%d)\n", lnb_eff);
                                         return -EINVAL;
                                 }
                                 settuner_reset(channel->ptr->regs, channel->ptr->cardtype, lnb_eff, TUNER_POWER_ON_RESET_DISABLE);
-                                printk(KERN_INFO "PT1:LNB on %s\n", voltage[lnb_eff]);
+                                pr_info("LNB on %s\n", voltage[lnb_eff]);
                         }
                         return 0 ;
                 case LNB_DISABLE:
                         count = count_used_bs_tuners(channel->ptr);
                         if(count <= 1) {
                                 settuner_reset(channel->ptr->regs, channel->ptr->cardtype, LNB_OFF, TUNER_POWER_ON_RESET_DISABLE);
-                                printk(KERN_INFO "PT1:LNB off\n");
+                                pr_info("LNB off\n");
                         }
                         return 0 ;
         }
@@ -1703,7 +1701,7 @@ static int      pt1_makering(struct pci_dev *pdev, PT1_DEVICE *dev_conf)
                 for(lp2 = 0 ; lp2 < DMA_RING_MAX ; lp2++){
                         dmaptr = dma_alloc_coherent(&pdev->dev, DMA_SIZE, &dmactl->ring_dma[lp2], GFP_KERNEL);
                         if(dmaptr == NULL){
-                                printk(KERN_INFO "PT1:DMA ALLOC ERROR\n");
+                                pr_err("DMA ALLOC ERROR\n");
                                 /*
                                  * 確保済み分を解放: lp2 未満の内側 + lp 未満の外側。
                                  * pt1_dma_free は data[i] != NULL チェック済みなので
@@ -1840,7 +1838,7 @@ static void pt1_debugfs_init(PT1_DEVICE *dev_conf)
         if (!pt1_debugfs_root) {
                 pt1_debugfs_root = debugfs_create_dir("pt1", NULL);
                 if (IS_ERR_OR_NULL(pt1_debugfs_root)) {
-                        pr_warn("pt1: debugfs_create_dir(pt1) failed\n");
+                        pr_warn("debugfs_create_dir(pt1) failed\n");
                         pt1_debugfs_root = NULL;
                         return;
                 }
@@ -1849,7 +1847,7 @@ static void pt1_debugfs_init(PT1_DEVICE *dev_conf)
         snprintf(name, sizeof(name), "card%d", dev_conf->card_number);
         dev_conf->debugfs_dir = debugfs_create_dir(name, pt1_debugfs_root);
         if (IS_ERR_OR_NULL(dev_conf->debugfs_dir)) {
-                pr_warn("pt1: debugfs_create_dir(%s) failed\n", name);
+                pr_warn("debugfs_create_dir(%s) failed\n", name);
                 dev_conf->debugfs_dir = NULL;
                 return;
         }
@@ -1878,7 +1876,7 @@ static int      pt1_dma_init(struct pci_dev *pdev, PT1_DEVICE *dev_conf)
         for(lp = 0 ; lp < DMA_RING_SIZE ; lp++){
                 ptr = dma_alloc_coherent(&pdev->dev, DMA_SIZE, &dev_conf->ring_dma[lp], GFP_KERNEL);
                 if(ptr == NULL){
-                        printk(KERN_INFO "PT1:DMA ALLOC ERROR\n");
+                        pr_err("DMA ALLOC ERROR\n");
                         /* 確保済み分を解放してから返る */
                         while (--lp >= 0)
                                 dma_free_coherent(&pdev->dev, DMA_SIZE,
@@ -1935,17 +1933,17 @@ static int pt1_pci_init_one (struct pci_dev *pdev,
          */
         rc = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32));
         if (rc) {
-                printk(KERN_ERR "PT1:DMA MASK ERROR");
+                pr_err("DMA MASK ERROR\n");
                 return rc;
         }
 
         pci_read_config_word(pdev, PCI_COMMAND, &cmd);
         if (!(cmd & PCI_COMMAND_MASTER)) {
-                printk(KERN_INFO "Attempting to enable Bus Mastering\n");
+                pr_info("Attempting to enable Bus Mastering\n");
                 pci_set_master(pdev);
                 pci_read_config_word(pdev, PCI_COMMAND, &cmd);
                 if (!(cmd & PCI_COMMAND_MASTER)) {
-                        printk(KERN_ERR "Bus Mastering is not enabled\n");
+                        pr_err("Bus Mastering is not enabled\n");
                         return -EIO;
                 }
         }
@@ -1953,7 +1951,7 @@ static int pt1_pci_init_one (struct pci_dev *pdev,
 
         dev_conf = kzalloc(sizeof(PT1_DEVICE), GFP_KERNEL);
         if(!dev_conf){
-                printk(KERN_ERR "PT1:out of memory !");
+                pr_err("out of memory !\n");
                 return -ENOMEM ;
         }
         /*
@@ -1969,7 +1967,7 @@ static int pt1_pci_init_one (struct pci_dev *pdev,
                                 kfree(dev_conf->dmactl[j]);
                         }
                         kref_put(&dev_conf->refcount, pt1_device_free);
-                        printk(KERN_ERR "PT1:out of memory !");
+                        pr_err("out of memory !\n");
                         return -ENOMEM ;
                 }
         }
@@ -1990,19 +1988,19 @@ static int pt1_pci_init_one (struct pci_dev *pdev,
         dev_conf->mmio_len = pci_resource_len(pdev, 0);
         dummy = request_mem_region(dev_conf->mmio_start, dev_conf->mmio_len, DEV_NAME);
         if (!dummy) {
-                printk(KERN_ERR "PT1:cannot request iomem  (0x%llx).\n", (unsigned long long) dev_conf->mmio_start);
+                pr_err("cannot request iomem  (0x%llx).\n", (unsigned long long) dev_conf->mmio_start);
                 goto out_err_regbase;
         }
 
         dev_conf->regs = ioremap(dev_conf->mmio_start, dev_conf->mmio_len);
         if (!dev_conf->regs){
-                printk(KERN_ERR "pt1:Can't remap register area.\n");
+                pr_err("Can't remap register area.\n");
                 release_mem_region(dev_conf->mmio_start, dev_conf->mmio_len);
                 goto out_err_regbase;
         }
         // 初期化処理
         if(xc3s_init(dev_conf->regs, dev_conf->cardtype)){
-                printk(KERN_ERR "Error xc3s_init\n");
+                pr_err("Error xc3s_init\n");
                 goto out_err_fpga;
         }
         // チューナリセット
@@ -2017,7 +2015,7 @@ static int pt1_pci_init_one (struct pci_dev *pdev,
         for(lp = 0 ; lp < MAX_TUNER ; lp++){
                 rc = tuner_init(dev_conf->regs, dev_conf->cardtype, &dev_conf->lock, lp);
                 if(rc < 0){
-                        printk(KERN_ERR "Error tuner_init\n");
+                        pr_err("Error tuner_init\n");
                         goto out_err_fpga;
                 }
         }
@@ -2039,7 +2037,7 @@ static int pt1_pci_init_one (struct pci_dev *pdev,
         minor = MINOR(dev_conf->dev) ;
         dev_conf->base_minor = minor ;
         for(lp = 0 ; lp < MAX_PCI_DEVICE ; lp++){
-                pt1_log(2, "PT1:device[%d]=%p\n", lp, device[lp]);
+                pt1_log(2, "device[%d]=%p\n", lp, device[lp]);
                 if(device[lp] == NULL){
                         device[lp] = dev_conf ;
                         dev_conf->card_number = lp;
@@ -2058,12 +2056,12 @@ static int pt1_pci_init_one (struct pci_dev *pdev,
                 rc = cdev_add(&dev_conf->cdev[lp],
                          MKDEV(MAJOR(dev_conf->dev), (MINOR(dev_conf->dev) + lp)), 1);
                 if (rc) {
-                        printk(KERN_ERR "PT1:cdev_add failed (ch=%d, rc=%d)\n", lp, rc);
+                        pr_err("cdev_add failed (ch=%d, rc=%d)\n", lp, rc);
                         goto out_err_v4l;
                 }
                 channel = kzalloc(sizeof(PT1_CHANNEL), GFP_KERNEL);
                 if(!channel){
-                        printk(KERN_ERR "PT1:out of memory !");
+                        pr_err("out of memory !\n");
                         /*
                          * FIX: 直接 return していたため、既に確保済みの
                          * dev_conf / dmactl[] / channel[0..lp-1] /
@@ -2142,7 +2140,7 @@ static int pt1_pci_init_one (struct pci_dev *pdev,
                                 WRITE_ONCE(channel->pointer, 0);
                                 break ;
                 }
-                printk(KERN_INFO "PT1:card_number = %d\n",
+                pr_info("card_number = %d\n",
                        dev_conf->card_number);
                 /*
                  * FIX: device_create() のシグネチャは Linux 2.6.27 以降で統一されており
@@ -2196,18 +2194,18 @@ static int pt1_pci_init_one (struct pci_dev *pdev,
                 /* watchdog thread */
                 dev_conf->watchdog_task = kthread_create(pt1_watchdog, dev_conf, "pt1_wd");
                 if (IS_ERR(dev_conf->watchdog_task)) {
-                        pr_warn("pt1: failed to create watchdog thread\n");
+                        pr_warn("failed to create watchdog thread\n");
                         dev_conf->watchdog_task = NULL;
                 } else {
                         kthread_bind(dev_conf->watchdog_task, dma_cpu);
                         wake_up_process(dev_conf->watchdog_task);
                 }
 
-                pr_info("pt1: card%d DMA/watchdog threads pinned to CPU%d\n",
+                pr_info("card%d DMA/watchdog threads pinned to CPU%d\n",
                         dev_conf->card_number, dma_cpu);
         } else {
                 if (dma_cpu >= 0)
-                        pr_warn("pt1: dma_cpu=%d not online, ignoring\n", dma_cpu);
+                        pr_warn("dma_cpu=%d not online, ignoring\n", dma_cpu);
 
                 /* CPU 固定なし: kthread_run で起動 */
                 dev_conf->kthread = kthread_run(pt1_thread, dev_conf, "pt1");
@@ -2219,7 +2217,7 @@ static int pt1_pci_init_one (struct pci_dev *pdev,
 
                 dev_conf->watchdog_task = kthread_run(pt1_watchdog, dev_conf, "pt1_wd");
                 if (IS_ERR(dev_conf->watchdog_task)) {
-                        pr_warn("pt1: failed to start watchdog thread\n");
+                        pr_warn("failed to start watchdog thread\n");
                         dev_conf->watchdog_task = NULL;
                 }
         }
@@ -2448,14 +2446,14 @@ static int pt1_pci_resume(struct device *dev)
          * rmmod → modprobe で完全に再初期化する必要がある。
          */
         if (smp_load_acquire(&dev_conf->device_dead)) {
-                pr_warn("pt1: card%d: resume skipped, device is dead\n",
+                pr_warn("card%d: resume skipped, device is dead\n",
                         dev_conf->card_number);
                 return 0;
         }
 
         rc = pci_enable_device(pdev);
         if (rc) {
-                pr_err("pt1: pci_enable_device failed on resume (%d)\n", rc);
+                pr_err("pci_enable_device failed on resume (%d)\n", rc);
                 return rc;
         }
         pci_set_master(pdev);
@@ -2508,17 +2506,17 @@ static struct pci_driver pt1_driver = {
 
 static int __init pt1_pci_init(void)
 {
-        printk(KERN_INFO "%s", version);
+        pr_info("%s", version);
 
         /* ring_count の検証: power of 2、かつ 256〜1048576 の範囲 */
         if (ring_count < 256 || ring_count > 1048576 ||
             (ring_count & (ring_count - 1)) != 0) {
-                pr_warn("pt1: invalid ring_count=%u, using default %u\n",
+                pr_warn("invalid ring_count=%u, using default %u\n",
                         ring_count, TS_RING_COUNT);
                 ring_count = TS_RING_COUNT;
         }
         ring_mask = ring_count - 1;
-        pr_info("pt1: ring_count=%u (~%uKB/ch)\n",
+        pr_info("ring_count=%u (~%uKB/ch)\n",
                 ring_count, ring_count * PACKET_SIZE / 1024);
 
         /*
