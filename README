@@ -1,0 +1,76 @@
+【PT1/PT2 Linux用ドライバ 改修版】
+
+このリポジトリはドライバ（pt1_drv）のみを扱います。
+
+recpt1 本家→ http://hg.honeyplanet.jp/pt1/ （※リンク切れ。参考として残置）
+recpt1 (stz2012版)→ https://github.com/stz2012/recpt1
+
+ドライバーについて
+
+ドライバー本体は、下記の分家版をベースに、安定性・安全性まわりを中心に大幅に手を入れた独自改修版です。
+オリジナルとの互換性を保つ変更ではないため、そのまま流用する場合はご注意下さい。
+
+　ベース: https://github.com/stz2012/recpt1/driver/ (PT1/PT2)
+
+主な改修内容:
+
+xc3s_init 時のロック確立待ちがループ変数のバグで意図の1/10しかポーリングされず、
+カーネル更新後にロード失敗する不具合を修正
+TS再同期ロジックを作り直し（旧実装は原理的に一度も機能していなかった）
+複数カード搭載時のI2Cバス状態の取り違えを修正
+DMA処理をロックレスのリングバッファ方式へ全面刷新し、DMAウォッチドッグによる
+自動リカバリを追加
+probe/removeまわりの各種メモリリーク・cdev登録エラー処理を追加
+ブロッキングreadが弱電界等で一時的にデータが来ない際、誤って EOF(0)を返し
+録画が打ち切られる不具合を修正
+開いたファイル記述子が残ったままPCIデバイスが取り外された場合の
+Use-After-Free対策（参照カウント導入）
+レジスタアクセスの排他ロック不備を修正
+LNB_ENABLE ioctlの範囲外配列アクセスを修正
+サスペンド/レジューム(dev_pm_ops)、poll()/epoll()、debugfs統計を追加
+3.x〜6.x台の古いカーネル互換コードを削除し、現行カーネル向けに整理
+
+インストール / 更新（DKMS）
+必要パッケージ: sudo apt install git build-essential dkms linux-headers-$(uname -r)
+git clone https://github.com/xseijin/recpt1.git   # 更新時は git pull origin master
+cd recpt1/driver
+sudo rmmod pt1_drv        # ロード中の場合（録画中でないことを確認）
+sudo sh dkms.install      # 旧版の削除 → ソースコピー → version.h 生成 → ビルド → インストール
+sudo modprobe pt1_drv
+# dkms.install は sh / bash どちらでも実行できます。事前の make は不要です。
+# アンインストール: sudo sh dkms.uninstall
+# 手動でビルドだけ確認する場合: cd driver && make （生成物の削除は make clean）
+# 確認: dkms status / cat /sys/module/pt1_drv/parameters/debug / journalctl -k -g pt1_drv
+# 補足: モジュールパラメータを固定するには /etc/modprobe.d/pt1_drv.conf に
+#       options pt1_drv debug=1 dma_cpu=2 のように記述します。
+# 注意: Secure Boot が有効な環境では、署名していないモジュールはロードできません。
+
+モジュールパラメータ（任意）
+sudo insmod pt1_drv.ko dma_cpu=2 dma_rt=1 ring_count=65536
+# dma_cpu:    DMA/watchdogスレッドを固定するCPU番号（-1=無効、デフォルト）
+# dma_rt:     DMAスレッドをSCHED_FIFO(low)に昇格するか（デフォルトOFF）
+# ring_count: チャンネルあたりのring bufferスロット数（2の累乗、デフォルト131072≈24MB/ch）
+# lnb:        LNB電源レベル（0:OFF 1:+11V 2:+15V）
+# debug:      ログの詳細度（0:静音 1:通常(デフォルト) 2:詳細）。実行時に変更可
+#             （echo 2 | sudo tee /sys/module/pt1_drv/parameters/debug）。
+#             1でリング使用率75%超の警告、2でBSのTS-ID一覧・同期ロスト・チューナー
+#             Wakeup/Sleep等の診断ログを出力。エラー/警告(ロック失敗等)はdebugに関係なく出力
+#             close時のDrop統計は、drop/overflow/エラーがあるとき(またはdebug=2)のみ出力
+# ログはすべてカーネルログに "pt1_drv: " 接頭辞付きで出力されます（journalctl -k -g pt1_drv）
+
+TSID指定（BS/CS）
+recisdb の --tsid オプションに対応しています（px4_drv 準拠）。
+SET_CHANNEL ioctl の slot フィールドが 0〜7 なら従来どおり相対TS番号、
+8 以上なら生のTSID値として扱い、TS-IDロックに直接渡します。
+（専用の SET_CHANNEL_TSID ioctl（{frequencyno, tsid}）も併用可能です）
+例: recisdb tune --device /dev/pt1video1 -c BS3 --tsid 0x4631 --time 10 out.m2ts
+# TSIDはBSの帯域再編で変わることがあります。指定したTSIDがそのトランスポンダに
+# 存在しない場合、選局は EIO（Unexpected Linux error: 5）で失敗し、dmesg に
+# "pt1_drv: ERROR TS-LOCK(xxxx)" が出ます。debug=2 にすると選局時に
+# "pt1_drv: BS freq=.. ts_id[0..7]=.." としてチューナーが読み取ったTS-ID一覧が出るので、
+# 実際に存在するTSIDを確認できます。
+
+動作確認環境:
+Ubuntu 26.04.1 LTS (Resolute Raccoon) x86_64 GNU/Linux Linux 7.0.0-31-generic SMP
+Ubuntu 26.04.1 LTS x86_64 Linux 7.0.0-34-generic
+Ubuntu 24.04 LTS x86_64 GNU/Linux Linux 6.14.0 SMP
