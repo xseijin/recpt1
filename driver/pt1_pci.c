@@ -24,6 +24,7 @@
 #include <linux/uaccess.h>
 #include <linux/compiler.h>
 #include <linux/ratelimit.h>
+#include <linux/pm.h>
 
 #include <asm/io.h>
 #include <asm/irq.h>
@@ -2402,10 +2403,16 @@ static void pt1_pci_remove_one(struct pci_dev *pdev)
         }
         pci_set_drvdata(pdev, NULL);
 }
-#ifdef CONFIG_PM
-
-static int pt1_pci_suspend (struct pci_dev *pdev, pm_message_t state)
+/*
+ * suspend/resume は旧式の pci_driver.suspend/.resume ではなく dev_pm_ops で実装する
+ * (旧式コールバックは近年のカーネルで廃止が進んでいる)。
+ * dev_pm_ops 経路では PCI コアが config space の保存/復元(pci_save_state/
+ * pci_restore_state)と電源状態の遷移を行うため、ここでは呼ばない。
+ * pci_disable_device()/pci_enable_device() は従来どおり対で呼ぶ。
+ */
+static int pt1_pci_suspend(struct device *dev)
 {
+        struct pci_dev *pdev = to_pci_dev(dev);
         PT1_DEVICE *dev_conf = pci_get_drvdata(pdev);
 
         if (!dev_conf)
@@ -2421,14 +2428,14 @@ static int pt1_pci_suspend (struct pci_dev *pdev, pm_message_t state)
         pt1_dma_stop(dev_conf);
         pt1_wait_dma_idle(dev_conf);
 
-        pci_save_state(pdev);
         pci_disable_device(pdev);
 
         return 0;
 }
 
-static int pt1_pci_resume (struct pci_dev *pdev)
+static int pt1_pci_resume(struct device *dev)
 {
+        struct pci_dev *pdev = to_pci_dev(dev);
         PT1_DEVICE *dev_conf = pci_get_drvdata(pdev);
         int rc;
 
@@ -2451,7 +2458,6 @@ static int pt1_pci_resume (struct pci_dev *pdev)
                 pr_err("pt1: pci_enable_device failed on resume (%d)\n", rc);
                 return rc;
         }
-        pci_restore_state(pdev);
         pci_set_master(pdev);
 
         /*
@@ -2487,7 +2493,7 @@ static int pt1_pci_resume (struct pci_dev *pdev)
         return 0;
 }
 
-#endif /* CONFIG_PM */
+static DEFINE_SIMPLE_DEV_PM_OPS(pt1_pm_ops, pt1_pci_suspend, pt1_pci_resume);
 
 
 static struct pci_driver pt1_driver = {
@@ -2495,10 +2501,7 @@ static struct pci_driver pt1_driver = {
         .probe          = pt1_pci_init_one,
         .remove         = pt1_pci_remove_one,
         .id_table       = pt1_pci_tbl,
-#ifdef CONFIG_PM
-        .suspend        = pt1_pci_suspend,
-        .resume         = pt1_pci_resume,
-#endif /* CONFIG_PM */
+        .driver.pm      = pm_sleep_ptr(&pt1_pm_ops),
 
 };
 
