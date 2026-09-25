@@ -23,6 +23,7 @@
 #include <linux/sched/rt.h>
 #include <linux/uaccess.h>
 #include <linux/compiler.h>
+#include <linux/ratelimit.h>
 
 #include <asm/io.h>
 #include <asm/irq.h>
@@ -56,7 +57,15 @@ MODULE_AUTHOR("Tomoaki Ishikawa tomy@users.sourceforge.jp and Yoshiki Yazawa yaz
 MODULE_DESCRIPTION(DRIVER_DESC);
 MODULE_LICENSE("GPL");
 
-static int debug = 7;                   /* 1 normal messages, 0 quiet .. 7 verbose. */
+/*
+ * debug: ログの詳細度。実行時に変更可能 (/sys/module/pt1_drv/parameters/debug)。
+ *   0: 静音。リング使用率 75% 超の警告を出さない (エラー、DMA リカバリ警告、
+ *      起動/LNB/close 時の従来の INFO は debug に関係なく出る)
+ *   1: 通常 (既定)。0 + リング使用率 75% 超の警告
+ *   2: 詳細。1 + 同期ロスト、スレッド起動、デバイスポインタ等の診断メッセージ
+ * 以前は宣言のみで参照箇所がなく、値は何も制御していなかった。
+ */
+static int debug = 1;
 static int lnb = 0;                     /* LNB OFF:0 +11V:1 +15V:2 */
 static int dma_cpu = -1;                /* DMA/watchdog thread を固定する CPU 番号。-1=無効
                                          * N100 等 録画専用機では isolcpus と合わせて設定すると効果的。
@@ -74,17 +83,29 @@ static bool dma_rt = false;             /* DMA thread を SCHED_FIFO(low) に昇
 static unsigned int ring_count = 131072;
 static unsigned int ring_mask  = 131071;        /* ring_count - 1, pt1_pci_init() で更新 */
 
-module_param(debug, int, 0);
+module_param(debug, int, 0644);
 module_param(lnb, int, 0);
 module_param(dma_cpu, int, 0444);
 module_param(dma_rt, bool, 0644);
 module_param(ring_count, uint, 0444);
-MODULE_PARM_DESC(debug, "debug level (1-2)");
+MODULE_PARM_DESC(debug, "log verbosity (0:quiet 1:normal(default) 2:verbose), changeable at runtime");
 MODULE_PARM_DESC(lnb, "LNB level (0:OFF 1:+11V 2:+15V)");
 MODULE_PARM_DESC(dma_cpu, "CPU number to pin DMA/watchdog threads (-1=no pinning, default)");
 MODULE_PARM_DESC(dma_rt, "Elevate DMA thread to SCHED_FIFO(low) (default=0/OFF, use with caution on N100)");
 MODULE_PARM_DESC(ring_count, "Ring buffer slots per channel (default=131072=~24MB/ch, must be power of 2)");
 /* NOTE: 元コードは MODULE_PARM_DESC(debug, ...) が2回あったため lnb 側を修正 */
+
+/* debug >= lvl のときだけ出力する。_rl は ratelimit 付き(録画中に繰り返し出るもの用) */
+#define pt1_log(lvl, fmt, ...) \
+	do { \
+		if (READ_ONCE(debug) >= (lvl)) \
+			printk(KERN_INFO fmt, ##__VA_ARGS__); \
+	} while (0)
+#define pt1_log_rl(lvl, fmt, ...) \
+	do { \
+		if (READ_ONCE(debug) >= (lvl)) \
+			printk_ratelimited(KERN_INFO fmt, ##__VA_ARGS__); \
+	} while (0)
 
 #define VENDOR_EARTHSOFT 0x10ee
 #define PCI_PT1_ID 0x211a
@@ -269,6 +290,8 @@ struct  _PT1_CHANNEL{
         u32                     max_fill;               /* ring 最大使用スロット数 */
         atomic_t                overflow_ring;          /* ring full による drop 回数 */
         atomic_t                underrun_count;         /* read() 時に ring 空だった回数 */
+        /* ring 使用率 75% 超の警告済みフラグ。50% 未満に戻ったら再武装(kzalloc で初期値 false) */
+        bool                    ring_high_warned;
         /*
          * FIX: channel 単位の参照カウント。open() が保持している間は
          * remove_one() が来ても実メモリ解放を遅延させ、Use-After-Free を防ぐ。
@@ -588,10 +611,23 @@ static void pt1_ring_write(PT1_CHANNEL *channel, const u8 *pkt)
                 atomic64_inc(&channel->fill_hist[
                         min_t(u32, used >> (ilog2(ring_count) - 2), 3)]);
 
-                /* 75% 超えたら debug メッセージを記録（ratelimited で長時間録画でも安全） */
-                if (unlikely(used * 4 >= ring_count * 3))
-                        pr_debug_ratelimited("pt1: ring high ch=%u fill=%u/%u\n",
-                                             channel->channel, used, ring_count);
+                /*
+                 * 75% 以上: 1回だけ警告する(ヒステリシス)。
+                 * 50% 未満に戻ったら再武装し、次に 75% を超えたとき再び警告する。
+                 * 毎パケット走る経路なので、通常時は READ_ONCE 1回の比較のみ。
+                 * DMA thread(producer) のみが書くため flag に競合はない。
+                 */
+                if (unlikely(used * 4 >= ring_count * 3)) {
+                        if (!READ_ONCE(channel->ring_high_warned)) {
+                                WRITE_ONCE(channel->ring_high_warned, true);
+                                if (READ_ONCE(debug) >= 1)
+                                        pr_warn_ratelimited("pt1: ring high ch=%u fill=%u/%u (>=75%%), consumer too slow?\n",
+                                                            channel->channel, used, ring_count);
+                        }
+                } else if (unlikely(READ_ONCE(channel->ring_high_warned) &&
+                                    used * 2 < ring_count)) {
+                        WRITE_ONCE(channel->ring_high_warned, false);
+                }
         }
 }
 
@@ -685,7 +721,7 @@ static  int             pt1_thread(void *data)
          * DMA の実際の開始（レジスタへの書き込み）は reset_dma が行う。
          */
         reset_dma(dev_conf);
-        printk(KERN_INFO "pt1_thread run\n");
+        pt1_log(2, "pt1_thread run\n");
 
         for(;;){
                 if(kthread_should_stop()){
@@ -858,7 +894,7 @@ static  int             pt1_thread(void *data)
                                                  * このパケット自体の内容は信頼できないため破棄する。
                                                  */
                                                 atomic64_inc(&dev_conf->sync_loss);
-                                                pr_debug_ratelimited("pt1: sync loss ch=%d sync_loss=%lld drop=%d, entering hunt\n",
+                                                pt1_log_rl(2, "pt1: sync loss ch=%d sync_loss=%lld drop=%d, entering hunt\n",
                                                              channel->channel,
                                                              atomic64_read(&dev_conf->sync_loss),
                                                              atomic_read(&channel->drop));
@@ -1462,7 +1498,7 @@ static int count_used_bs_tuners(PT1_DEVICE *device)
                         count++;
         }
 
-        printk(KERN_INFO "used bs tuners on %p = %d\n", device, count);
+        pt1_log(2, "used bs tuners on %p = %d\n", device, count);
         return count;
 }
 
@@ -1905,7 +1941,7 @@ static int pt1_pci_init_one (struct pci_dev *pdev,
                         return -EIO;
                 }
         }
-        printk(KERN_INFO "Bus Mastering Enabled.\n");
+        pt1_log(2, "Bus Mastering Enabled.\n");
 
         dev_conf = kzalloc(sizeof(PT1_DEVICE), GFP_KERNEL);
         if(!dev_conf){
@@ -1995,7 +2031,7 @@ static int pt1_pci_init_one (struct pci_dev *pdev,
         minor = MINOR(dev_conf->dev) ;
         dev_conf->base_minor = minor ;
         for(lp = 0 ; lp < MAX_PCI_DEVICE ; lp++){
-                printk(KERN_INFO "PT1:device[%d]=%p\n", lp, device[lp]);
+                pt1_log(2, "PT1:device[%d]=%p\n", lp, device[lp]);
                 if(device[lp] == NULL){
                         device[lp] = dev_conf ;
                         dev_conf->card_number = lp;
