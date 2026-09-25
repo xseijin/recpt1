@@ -20,7 +20,7 @@ pt1_drv-objs := pt1_pci.o pt1_i2c.o pt1_tuner.o pt1_tuner_data.o
 
 clean-files := *.o *.ko *.mod.[co] *~ version.h
 
-version.h:
+version.h: dkms.conf
 	eval `sed -e "s/\[0\]//" ./dkms.conf`; \
 	printf "#define DRV_VERSION \"$${PACKAGE_VERSION}\"\n#define DRV_RELDATE \"$$PACKAGE_RELDATE\"\n#define DRV_NAME \"$${BUILT_MODULE_NAME}\"\n" > $@;
 

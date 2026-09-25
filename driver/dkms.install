@@ -1,10 +1,29 @@
 #!/bin/sh
 set -e
 
-# カレントディレクトリの dkms.conf を読み込み
-. ./dkms.conf
+# dkms.conf は bash 配列構文(MAKE[0]=...)を含み sh では source できないため、
+# 必要な値だけ sed で取り出す(sh/dash/bash/zsh のどれで実行しても動く)。
+conf_get() {
+    sed -n "s/^$1=\"\{0,1\}\([^\"]*\)\"\{0,1\}\$/\1/p" ./dkms.conf | head -n 1
+}
+
+if [ ! -f ./dkms.conf ]; then
+    echo "dkms.conf not found (run this in the driver directory)" >&2
+    exit 1
+fi
+
+PACKAGE_NAME=$(conf_get PACKAGE_NAME)
+PACKAGE_VERSION=$(conf_get PACKAGE_VERSION)
+if [ -z "${PACKAGE_NAME}" ] || [ -z "${PACKAGE_VERSION}" ]; then
+    echo "cannot read PACKAGE_NAME/PACKAGE_VERSION from dkms.conf" >&2
+    exit 1
+fi
 
 SRC_DIR="/usr/src/${PACKAGE_NAME}-${PACKAGE_VERSION}"
+
+for cmd in dkms make; do
+    command -v "$cmd" >/dev/null 2>&1 || { echo "$cmd not found (apt install dkms build-essential)" >&2; exit 1; }
+done
 
 # 事前アンインストール
 if [ -f ./dkms.uninstall ]; then
@@ -12,7 +31,17 @@ if [ -f ./dkms.uninstall ]; then
 fi
 
 echo "Installing ${PACKAGE_NAME}-${PACKAGE_VERSION} to DKMS..."
-cp -a "$(pwd)" "${SRC_DIR}"
+# ビルド生成物(*.o, *.ko 等)を含めず、ソース一式だけをコピーする。
+rm -rf "${SRC_DIR}"
+mkdir -p "${SRC_DIR}"
+cp -a Makefile dkms.conf ./*.c ./*.h etc "${SRC_DIR}/"
+
+# version.h は Makefile が dkms.conf から生成する。DKMS は Kbuild を直接呼ぶため
+# (Makefile の all ターゲットを経由しない)、コピー先で先に生成しておく必要がある。
+# make clean で消えるので、コピー元の古い version.h は使わず必ず作り直す。
+rm -f "${SRC_DIR}/version.h"
+make -C "${SRC_DIR}" version.h
+
 dkms add -m "${PACKAGE_NAME}" -v "${PACKAGE_VERSION}"
 dkms build -m "${PACKAGE_NAME}" -v "${PACKAGE_VERSION}"
 dkms install -m "${PACKAGE_NAME}" -v "${PACKAGE_VERSION}"

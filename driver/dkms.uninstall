@@ -1,10 +1,20 @@
 #!/bin/sh
-if [ "$ZSH_NAME" = "zsh" ]; then
-    setopt localoptions ksharrays
+# dkms.conf は bash 配列構文(MAKE[0]=...)を含み sh では source できないため、
+# 必要な値だけ sed で取り出す(sh/dash/bash/zsh のどれで実行しても動く)。
+conf_get() {
+    sed -n "s/^$1=\"\{0,1\}\([^\"]*\)\"\{0,1\}\$/\1/p" ./dkms.conf | head -n 1
+}
+
+if [ ! -f ./dkms.conf ]; then
+    echo "dkms.conf not found (run this in the driver directory)" >&2
+    exit 1
 fi
 
-if [ -f ./dkms.conf ]; then
-    . ./dkms.conf
+PACKAGE_NAME=$(conf_get PACKAGE_NAME)
+PACKAGE_VERSION=$(conf_get PACKAGE_VERSION)
+if [ -z "${PACKAGE_NAME}" ] || [ -z "${PACKAGE_VERSION}" ]; then
+    echo "cannot read PACKAGE_NAME/PACKAGE_VERSION from dkms.conf" >&2
+    exit 1
 fi
 
 SRC_DIR="/usr/src/${PACKAGE_NAME}-${PACKAGE_VERSION}"
