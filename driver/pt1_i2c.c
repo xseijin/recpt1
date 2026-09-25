@@ -70,8 +70,12 @@ static	int		*get_i2c_state(void __iomem *regs)
 }
 
 /*
- * release_i2c_state - regs に対応する i2c_state_table のエントリを解放する。
- * remove_one() / probe 失敗パスから呼ばれる。未登録の regs なら何もしない。
+ * FIX: get_i2c_state() が確保したエントリを解放する関数が存在せず、
+ * rmmod/insmod を繰り返すたびに(ioremap() は毎回別の仮想アドレスを
+ * 返し得るため)テーブルに古い regs のエントリが残り続けていた。
+ * MAX_I2C_DEVICES(8) 枚分埋まると、9回目以降は slot 0 を共有する
+ * フォールバックに入ってしまう。pt1_pci_remove_one() から呼んで
+ * 該当エントリを解放する。
  */
 void	release_i2c_state(void __iomem *regs)
 {

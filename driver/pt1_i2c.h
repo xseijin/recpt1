@@ -80,6 +80,11 @@ extern	void	SetStream(void __iomem *, __u32, __u32);
 extern	void	blockwrite(void __iomem *, WBLOCK *);
 extern	void	i2c_write(void __iomem *, struct mutex *, WBLOCK *);
 extern	__u32	i2c_read(void __iomem *, struct mutex *, WBLOCK *, int);
+/*
+ * FIX: get_i2c_state() が regs をキーに確保する I2C バス状態テーブルの
+ * エントリを、デバイス取り外し時に解放するための関数。
+ * pt1_pci_remove_one() から呼ぶ。
+ */
 extern	void	release_i2c_state(void __iomem *);
 
 #endif
