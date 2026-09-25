@@ -52,7 +52,7 @@
 
 /* These identify the driver base version and may not be removed. */
 static char version[] =
-DRV_NAME ".c: " DRV_VERSION " " DRV_RELDATE " \n";
+"version " DRV_VERSION " " DRV_RELDATE "\n";
 
 MODULE_AUTHOR("Tomoaki Ishikawa tomy@users.sourceforge.jp and Yoshiki Yazawa yaz@honeyplanet.jp");
 #define DRIVER_DESC             "PCI earthsoft PT1/2 driver"
@@ -2044,6 +2044,8 @@ static int pt1_pci_init_one (struct pci_dev *pdev,
                         break ;
                 }
         }
+        /* カードごとに1回だけ出力する(以前はチャンネルごとのループ内で4回出ていた) */
+        pr_info("card_number = %d\n", dev_conf->card_number);
         for(lp = 0 ; lp < MAX_CHANNEL ; lp++){
                 cdev_init(&dev_conf->cdev[lp], &pt1_fops);
                 dev_conf->cdev[lp].owner = THIS_MODULE;
@@ -2140,8 +2142,6 @@ static int pt1_pci_init_one (struct pci_dev *pdev,
                                 WRITE_ONCE(channel->pointer, 0);
                                 break ;
                 }
-                pr_info("card_number = %d\n",
-                       dev_conf->card_number);
                 /*
                  * FIX: device_create() のシグネチャは Linux 2.6.27 以降で統一されており
                  * バージョン分岐は不要。古い #if ブロックを除去してクリーンに。
