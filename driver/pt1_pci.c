@@ -1062,8 +1062,14 @@ static int pt1_open(struct inode *inode, struct file *file)
         PT1_CHANNEL     *channel ;
 
         for(lp = 0 ; lp < MAX_PCI_DEVICE ; lp++){
+                /*
+                 * FIX: 以前は NULL で即 -EIO を返していた。remove_one() は
+                 * device[card_number] = NULL とするだけで詰め直さないため、
+                 * card0 だけ取り外された状態では card1 の open が常に失敗していた。
+                 * 空きスロットは飛ばして次を見る(ループ完走時は末尾で -EIO)。
+                 */
                 if(device[lp] == NULL){
-                        return -EIO ;
+                        continue ;
                 }
 
                 if(MAJOR(device[lp]->dev) == major &&
@@ -1374,8 +1380,13 @@ static ssize_t pt1_read(struct file *file, char __user *buf, size_t cnt, loff_t 
 
                 spin_lock_irqsave(&ring->overflow_lock, flags);
                 if (ring->tail == tail) {
-                        /* producer が overflow で tail を進めていなければ通常通り進める */
-                        WRITE_ONCE(ring->tail, (tail + contig) & ring_mask);
+                        /*
+                         * producer が overflow で tail を進めていなければ通常通り進める。
+                         * copy_to_user() によるスロット読み出しが完了してから tail を
+                         * 進めたことを producer(READ_ONCE(tail))に保証するため release。
+                         * (x86 では実質コストなし。弱順序の CPU での再利用防止のため)
+                         */
+                        smp_store_release(&ring->tail, (tail + contig) & ring_mask);
                 }
                 /*
                  * producer が既に進めていた場合は、producer 側の値を
@@ -2282,6 +2293,13 @@ out_err_fpga:
          * kref_put() 経由にする。
          */
         kref_put(&dev_conf->refcount, pt1_device_free);
+        /*
+         * FIX: ここで return しないと直下の out_err_regbase に fall-through し、
+         * 解放済みの dev_conf を参照して dmactl[] を二重 kfree し、さらに
+         * kref_put() を二重に呼んでいた(xc3s_init/tuner_init 失敗時などの
+         * probe 失敗パスで use-after-free / double free になる)。
+         */
+        return -EIO;
 out_err_regbase:
         /*
          * FIX: request_mem_region() / ioremap() 失敗時にここへ来るが、
