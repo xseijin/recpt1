@@ -1405,6 +1405,13 @@ static  int             SetFreq(PT1_CHANNEL *channel, FREQUENCY *freq)
                                                 &tmcc) < 0){
                                         return -EIO ;
                                 }
+                                /* debug>=2: このトランスポンダでチューナーが読み取った相対TS番号ごとのTS-ID(0xFFFF=なし) */
+                                pt1_log(2, "PT1:BS freq=%d slot=%d ts_id[0..7]=%04x %04x %04x %04x %04x %04x %04x %04x\n",
+                                        freq->frequencyno, freq->slot,
+                                        tmcc.ts_id[0].ts_id, tmcc.ts_id[1].ts_id,
+                                        tmcc.ts_id[2].ts_id, tmcc.ts_id[3].ts_id,
+                                        tmcc.ts_id[4].ts_id, tmcc.ts_id[5].ts_id,
+                                        tmcc.ts_id[6].ts_id, tmcc.ts_id[7].ts_id);
                                 /*
                                  * FIX: recisdb 等の一部ツールは "--tsid" 指定時、
                                  * 独自のTSID→slot変換や専用ioctlを使わず、
