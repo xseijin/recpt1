@@ -9,6 +9,14 @@ typedef	struct	_frequency{
 }FREQUENCY;
 
 /***************************************************************************/
+/* TSID直接指定(ISDB-S専用)                                                */
+/***************************************************************************/
+typedef	struct	_frequency_tsid{
+	int		frequencyno ;			// 周波数テーブル番号(トランスポンダ)
+	int		tsid ;					// ロックする TSID
+}FREQUENCY_TSID;
+
+/***************************************************************************/
 /* IOCTL定義                                                               */
 /***************************************************************************/
 #define		SET_CHANNEL	_IOW(0x8D, 0x01, FREQUENCY)
@@ -17,4 +25,5 @@ typedef	struct	_frequency{
 #define		GET_SIGNAL_STRENGTH	_IOR(0x8D, 0x04, int *)
 #define		LNB_ENABLE	_IOW(0x8D, 0x05, int)
 #define		LNB_DISABLE	_IO(0x8D, 0x06)
+#define		SET_CHANNEL_TSID	_IOW(0x8D, 0x07, FREQUENCY_TSID)
 #endif

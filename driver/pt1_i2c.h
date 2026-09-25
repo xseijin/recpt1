@@ -80,5 +80,6 @@ extern	void	SetStream(void __iomem *, __u32, __u32);
 extern	void	blockwrite(void __iomem *, WBLOCK *);
 extern	void	i2c_write(void __iomem *, struct mutex *, WBLOCK *);
 extern	__u32	i2c_read(void __iomem *, struct mutex *, WBLOCK *, int);
+extern	void	release_i2c_state(void __iomem *);
 
 #endif

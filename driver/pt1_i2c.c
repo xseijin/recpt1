@@ -68,6 +68,26 @@ static	int		*get_i2c_state(void __iomem *regs)
 	}
 	return ret ;
 }
+
+/*
+ * release_i2c_state - regs に対応する i2c_state_table のエントリを解放する。
+ * remove_one() / probe 失敗パスから呼ばれる。未登録の regs なら何もしない。
+ */
+void	release_i2c_state(void __iomem *regs)
+{
+	unsigned long	flags ;
+	int				lp ;
+
+	spin_lock_irqsave(&i2c_state_lock, flags);
+	for(lp = 0 ; lp < MAX_I2C_DEVICES ; lp++){
+		if(i2c_state_table[lp].regs == regs){
+			i2c_state_table[lp].regs  = NULL ;
+			i2c_state_table[lp].state = STATE_STOP ;
+			break ;
+		}
+	}
+	spin_unlock_irqrestore(&i2c_state_lock, flags);
+}
 static	int		i2c_lock(void __iomem *, __u32, __u32, __u32);
 static	int		i2c_lock_one(void __iomem *, __u32, __u32);
 static	int		i2c_unlock(void __iomem *, int);
