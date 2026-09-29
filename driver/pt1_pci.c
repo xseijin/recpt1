@@ -305,9 +305,9 @@ struct  _PT1_CHANNEL{
 };
 
 // I2Cアドレス(video0, 1 = ISDB-S) (video2, 3 = ISDB-T)
-int             i2c_address[MAX_CHANNEL] = {T0_ISDB_S, T1_ISDB_S, T0_ISDB_T, T1_ISDB_T};
-int             real_channel[MAX_CHANNEL] = {0, 2, 1, 3};
-int             channeltype[MAX_CHANNEL] = {CHANNEL_TYPE_ISDB_S, CHANNEL_TYPE_ISDB_S,
+static int             i2c_address[MAX_CHANNEL] = {T0_ISDB_S, T1_ISDB_S, T0_ISDB_T, T1_ISDB_T};
+static int             real_channel[MAX_CHANNEL] = {0, 2, 1, 3};
+static int             channeltype[MAX_CHANNEL] = {CHANNEL_TYPE_ISDB_S, CHANNEL_TYPE_ISDB_S,
                                                                         CHANNEL_TYPE_ISDB_T, CHANNEL_TYPE_ISDB_T};
 
 static  PT1_DEVICE      *device[MAX_PCI_DEVICE];
@@ -681,7 +681,6 @@ static  int             pt1_thread(void *data)
         int             lp ;
         int             chno ;
         int             dma_channel ;
-        int             packet_pos ;
         __u32   *dataptr ;
         __u32   *curdataptr ;
         __u32   val ;
@@ -765,7 +764,6 @@ static  int             pt1_thread(void *data)
                                         continue ;
                                 }
                                 chno = real_channel[dma_channel - 1];
-                                packet_pos = ((micro.packet.head >> 2) & 0x07);
                                 if (unlikely(chno >= MAX_CHANNEL || dev_conf->channel[chno] == NULL)) {
                                         pr_err_ratelimited("invalid chno=%d dma_channel=%d\n",
                                                            chno, dma_channel);
@@ -1524,7 +1522,7 @@ static long pt1_do_ioctl(struct file  *file, unsigned int cmd, unsigned long arg
         PT1_CHANNEL     *channel = file->private_data;
         int             signal = 0;
         unsigned long   dummy;
-        void            *arg = (void *)arg0;
+        void __user     *arg = (void __user *)arg0;
         int             lnb_eff, lnb_usr;
         char *voltage[] = {"0V", "11V", "15V"};
         int count;
