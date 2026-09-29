@@ -24,7 +24,7 @@ typedef	struct	_TUNER_INFO{
 	int		isdb_t ;
 }TUNER_INFO;
 
-TUNER_INFO	tuner_info[2] = {
+static TUNER_INFO	tuner_info[2] = {
 	{T0_ISDB_S, T0_ISDB_T},
 	{T1_ISDB_S, T1_ISDB_T}
 };
@@ -34,7 +34,7 @@ typedef	struct	_isdb_t_freq_add_table{
 	__u16		add_freq ;	// 追加する値
 }isdb_t_freq_add_table;
 
-isdb_t_freq_add_table	isdb_t_freq_add[10] = {
+static isdb_t_freq_add_table	isdb_t_freq_add[10] = {
 	{  7, 0x8081},				// 0～7迄
 	{ 12, 0x80A1},				// 8～12迄
 	{ 21, 0x8062},				// 13～21迄

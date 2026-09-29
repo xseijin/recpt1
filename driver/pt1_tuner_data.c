@@ -90,115 +90,115 @@ WBLOCK	isdb_s_init1 ={
 	{0x0f}
 };
 // ISDB-S初期化値２
-WBLOCK	isdb_s_init2 ={
+static WBLOCK	isdb_s_init2 ={
 	0,
 	2,
 	{0x04, 0x02}
 };
 // ISDB-S初期化値３
-WBLOCK	isdb_s_init3 ={
+static WBLOCK	isdb_s_init3 ={
 	0,
 	2,
 	{0x0D, 0x55} //pt1 only
 };
 // ISDB-S初期化値４
-WBLOCK	isdb_s_init4 ={
+static WBLOCK	isdb_s_init4 ={
 	0,
 	2,
 	{0x11, 0x40}
 };
 // ISDB-S初期化値５
-WBLOCK	isdb_s_init5 ={
+static WBLOCK	isdb_s_init5 ={
 	0,
 	2,
 	{0x13, 0x80}
 };
 // ISDB-S初期化値６
-WBLOCK	isdb_s_init6 ={
+static WBLOCK	isdb_s_init6 ={
 	0,
 	2,
 	{0x17, 0x01}
 };
 // ISDB-S初期化値７
-WBLOCK	isdb_s_init7 ={
+static WBLOCK	isdb_s_init7 ={
 	0,
 	2,
 	{0x1C, 0x0A}
 };
 // ISDB-S初期化値８
-WBLOCK	isdb_s_init8 ={
+static WBLOCK	isdb_s_init8 ={
 	0,
 	2,
 	{0x1D, 0xAA}
 };
 // ISDB-S初期化値９
-WBLOCK	isdb_s_init9 ={
+static WBLOCK	isdb_s_init9 ={
 	0,
 	2,
 	{0x1E, 0x20}
 };
 // ISDB-S初期化値１０
-WBLOCK	isdb_s_init10 ={
+static WBLOCK	isdb_s_init10 ={
 	0,
 	2,
 	{0x1F, 0x88}
 };
 // ISDB-S初期化値１１
-WBLOCK	isdb_s_init11 ={
+static WBLOCK	isdb_s_init11 ={
 	0,
 	2,
 	{0x51, 0xB0}
 };
 // ISDB-S初期化値１２
-WBLOCK	isdb_s_init12 ={
+static WBLOCK	isdb_s_init12 ={
 	0,
 	2,
 	{0x52, 0x89}
 };
 // ISDB-S初期化値１３
-WBLOCK	isdb_s_init13 ={
+static WBLOCK	isdb_s_init13 ={
 	0,
 	2,
 	{0x53, 0xB3}
 };
 // ISDB-S初期化値１４
-WBLOCK	isdb_s_init14 ={
+static WBLOCK	isdb_s_init14 ={
 	0,
 	2,
 	{0x5A, 0x2D}
 };
 // ISDB-S初期化値１５
-WBLOCK	isdb_s_init15 ={
+static WBLOCK	isdb_s_init15 ={
 	0,
 	2,
 	{0x5B, 0xD3}
 };
 // ISDB-S初期化値１６
-WBLOCK	isdb_s_init16 ={
+static WBLOCK	isdb_s_init16 ={
 	0,
 	2,
 	{0x85, 0x69}
 };
 // ISDB-S初期化値１７
-WBLOCK	isdb_s_init17 ={
+static WBLOCK	isdb_s_init17 ={
 	0,
 	2,
 	{0x87, 0x04}
 };
 // ISDB-S初期化値１８
-WBLOCK	isdb_s_init18 ={
+static WBLOCK	isdb_s_init18 ={
 	0,
 	2,
 	{0x8E, 0x26}
 };
 // ISDB-S初期化値１９
-WBLOCK	isdb_s_init19 ={
+static WBLOCK	isdb_s_init19 ={
 	0,
 	2,
 	{0xA3, 0xF7}
 };
 // ISDB-S初期化値２０
-WBLOCK	isdb_s_init20 ={
+static WBLOCK	isdb_s_init20 ={
 	0,
 	2,
 	{0xA5, 0xC0}
@@ -213,97 +213,97 @@ WBLOCK isdb_s_init21 ={
 /* 初期化データ定義(ISDB-T)                                                */
 /***************************************************************************/
 // ISDB-T初期化値１
-WBLOCK	isdb_t_init1 ={
+static WBLOCK	isdb_t_init1 ={
 	0,
 	2,
 	{0x03, 0x90}
 };
 // ISDB-T初期化値２
-WBLOCK	isdb_t_init2 ={
+static WBLOCK	isdb_t_init2 ={
 	0,
 	2,
 	{0x14, 0x8F} //pt1 only
 };
 // ISDB-T初期化値３
-WBLOCK	isdb_t_init3 ={
+static WBLOCK	isdb_t_init3 ={
 	0,
 	2,
 	{0x1C, 0x2A}
 };
 // ISDB-T初期化値４
-WBLOCK	isdb_t_init4 ={
+static WBLOCK	isdb_t_init4 ={
 	0,
 	2,
 	{0x1D, 0xA8}
 };
 // ISDB-T初期化値５
-WBLOCK	isdb_t_init5 ={
+static WBLOCK	isdb_t_init5 ={
 	0,
 	2,
 	{0x1E, 0xA2}
 };
 // ISDB-T初期化値６
-WBLOCK	isdb_t_init6 ={
+static WBLOCK	isdb_t_init6 ={
 	0,
 	2,
 	{0x22, 0x83}
 };
 // ISDB-T初期化値７
-WBLOCK	isdb_t_init7 ={
+static WBLOCK	isdb_t_init7 ={
 	0,
 	2,
 	{0x31, 0x0D} //pt1
 };
 // ISDB-T初期化値８
-WBLOCK	isdb_t_init8 ={
+static WBLOCK	isdb_t_init8 ={
 	0,
 	2,
 	{0x32, 0xE0} //pt1
 };
 // ISDB-T初期化値９
-WBLOCK	isdb_t_init9 ={
+static WBLOCK	isdb_t_init9 ={
 	0,
 	2,
 	{0x39, 0xD3} //pt1
 };
 // ISDB-T初期化値１０
-WBLOCK	isdb_t_init10 ={
+static WBLOCK	isdb_t_init10 ={
 	0,
 	2,
 	{0x3A, 0x00}
 };
 // ISDB-T初期化値１１
-WBLOCK	isdb_t_init11 ={
+static WBLOCK	isdb_t_init11 ={
 	0,
 	2,
 	{0x5C, 0x40}
 };
 // ISDB-T初期化値１２
-WBLOCK	isdb_t_init12 ={
+static WBLOCK	isdb_t_init12 ={
 	0,
 	2,
 	{0x5F, 0x80}
 };
 // ISDB-T初期化値１３
-WBLOCK	isdb_t_init13 ={
+static WBLOCK	isdb_t_init13 ={
 	0,
 	2,
 	{0x75, 0x0a}
 };
 // ISDB-T初期化値１４
-WBLOCK	isdb_t_init14 ={
+static WBLOCK	isdb_t_init14 ={
 	0,
 	2,
 	{0x76, 0x4c}
 };
 // ISDB-T初期化値１５
-WBLOCK	isdb_t_init15 ={
+static WBLOCK	isdb_t_init15 ={
 	0,
 	2,
 	{0x77, 0x03}
 };
 // ISDB-T初期化値１６
-WBLOCK	isdb_t_init16 ={
+static WBLOCK	isdb_t_init16 ={
 	0,
 	2,
 	{0xEF, 0x01}
@@ -413,12 +413,12 @@ WBLOCK	isdb_t_agc2 = {
 	1,
 	{0x82}
 };
-WBLOCK	isdb_t_lockedt1 = {
+static WBLOCK __maybe_unused	isdb_t_lockedt1 = {
 	0,
 	1,
 	{0x96}
 };
-WBLOCK	isdb_t_lockedt2 = {
+static WBLOCK __maybe_unused	isdb_t_lockedt2 = {
 	0,
 	1,
 	{0xB0}
@@ -465,22 +465,22 @@ WBLOCK	bs_tmcc_get_2 = {
 /***************************************************************************/
 /* TMCC取得                                                                */
 /***************************************************************************/
-WBLOCK	bs_get_slot_ts_id_1 = {
+static WBLOCK	bs_get_slot_ts_id_1 = {
 	0,
 	1,
 	{0xCE}
 };
-WBLOCK	bs_get_slot_ts_id_2 = {
+static WBLOCK	bs_get_slot_ts_id_2 = {
 	0,
 	1,
 	{0xD2}
 };
-WBLOCK	bs_get_slot_ts_id_3 = {
+static WBLOCK	bs_get_slot_ts_id_3 = {
 	0,
 	1,
 	{0xD6}
 };
-WBLOCK	bs_get_slot_ts_id_4 = {
+static WBLOCK	bs_get_slot_ts_id_4 = {
 	0,
 	1,
 	{0xDA}
@@ -551,7 +551,7 @@ WBLOCK	bs_get_carrir = {
 /***************************************************************************/
 /* BS共通テーブル                                                          */
 /***************************************************************************/
-WBLOCK	bs_com_step2 = {
+static WBLOCK	bs_com_step2 = {
 	0,
 	3,
 	{0xFE, 0xC0, 0xE4}
@@ -559,12 +559,12 @@ WBLOCK	bs_com_step2 = {
 /***************************************************************************/
 /* BS-1                                                                    */
 /***************************************************************************/
-WBLOCK	bs_1_step1 = {
+static WBLOCK	bs_1_step1 = {
 	0,
 	6,
 	{0xFE, 0xC0, 0x48, 0x29, 0xE0, 0xD2}
 };
-WBLOCK	bs_1_step3 = {
+static WBLOCK	bs_1_step3 = {
 	0,
 	4,
 	{0xFE, 0xC0, 0xF4, 0xD6}
@@ -572,12 +572,12 @@ WBLOCK	bs_1_step3 = {
 /***************************************************************************/
 /* BS-3                                                                    */
 /***************************************************************************/
-WBLOCK	bs_3_step1 = {
+static WBLOCK	bs_3_step1 = {
 	0,
 	6,
 	{0xFE, 0xC0, 0x44, 0x40, 0xE0, 0xE2}
 };
-WBLOCK	bs_3_step3 = {
+static WBLOCK	bs_3_step3 = {
 	0,
 	4,
 	{0xFE, 0xC0, 0xF4, 0xE6}
@@ -585,12 +585,12 @@ WBLOCK	bs_3_step3 = {
 /***************************************************************************/
 /* BS-5                                                                    */
 /***************************************************************************/
-WBLOCK	bs_5_step1 = {
+static WBLOCK	bs_5_step1 = {
 	0,
 	6,
 	{0xFE, 0xC0, 0x44, 0x66, 0xE0, 0xE2}
 };
-WBLOCK	bs_5_step3 = {
+static WBLOCK	bs_5_step3 = {
 	0,
 	4,
 	{0xFE, 0xC0, 0xF4, 0xE6}
@@ -598,12 +598,12 @@ WBLOCK	bs_5_step3 = {
 /***************************************************************************/
 /* BS-7                                                                    */
 /***************************************************************************/
-WBLOCK	bs_7_step1 = {
+static WBLOCK	bs_7_step1 = {
 	0,
 	6,
 	{0xFE, 0xC0, 0x44, 0x8D, 0xE0, 0x20}
 };
-WBLOCK	bs_7_step3 = {
+static WBLOCK	bs_7_step3 = {
 	0,
 	4,
 	{0xFE, 0xC0, 0xF4, 0x24}
@@ -611,12 +611,12 @@ WBLOCK	bs_7_step3 = {
 /***************************************************************************/
 /* BS-9                                                                    */
 /***************************************************************************/
-WBLOCK	bs_9_step1 = {
+static WBLOCK	bs_9_step1 = {
 	0,
 	6,
 	{0xFE, 0xC0, 0x44, 0xB3, 0xE0, 0x20}
 };
-WBLOCK	bs_9_step3 = {
+static WBLOCK	bs_9_step3 = {
 	0,
 	4,
 	{0xFE, 0xC0, 0xF4, 0x24}
@@ -624,12 +624,12 @@ WBLOCK	bs_9_step3 = {
 /***************************************************************************/
 /* BS-11                                                                   */
 /***************************************************************************/
-WBLOCK	bs_11_step1 = {
+static WBLOCK	bs_11_step1 = {
 	0,
 	6,
 	{0xFE, 0xC0, 0x44, 0xD9, 0xE0, 0x20}
 };
-WBLOCK	bs_11_step3 = {
+static WBLOCK	bs_11_step3 = {
 	0,
 	4,
 	{0xFE, 0xC0, 0xF4, 0x24}
@@ -637,12 +637,12 @@ WBLOCK	bs_11_step3 = {
 /***************************************************************************/
 /* BS-13                                                                   */
 /***************************************************************************/
-WBLOCK	bs_13_step1 = {
+static WBLOCK	bs_13_step1 = {
 	0,
 	6,
 	{0xFE, 0xC0, 0x45, 0x00, 0xE0, 0x20}
 };
-WBLOCK	bs_13_step3 = {
+static WBLOCK	bs_13_step3 = {
 	0,
 	4,
 	{0xFE, 0xC0, 0xF4, 0x24}
@@ -650,12 +650,12 @@ WBLOCK	bs_13_step3 = {
 /***************************************************************************/
 /* BS-15                                                                   */
 /***************************************************************************/
-WBLOCK	bs_15_step1 = {
+static WBLOCK	bs_15_step1 = {
 	0,
 	6,
 	{0xFE, 0xC0, 0x45, 0x26, 0xE0, 0x40}
 };
-WBLOCK	bs_15_step3 = {
+static WBLOCK	bs_15_step3 = {
 	0,
 	4,
 	{0xFE, 0xC0, 0xF4, 0x44}
@@ -663,12 +663,12 @@ WBLOCK	bs_15_step3 = {
 /***************************************************************************/
 /* BS-17                                                                   */
 /***************************************************************************/
-WBLOCK	bs_17_step1 = {
+static WBLOCK	bs_17_step1 = {
 	0,
 	6,
 	{0xFE, 0xC0, 0x45, 0x4C, 0xE0, 0x40}
 };
-WBLOCK	bs_17_step3 = {
+static WBLOCK	bs_17_step3 = {
 	0,
 	4,
 	{0xFE, 0xC0, 0xF4, 0X44}
@@ -676,12 +676,12 @@ WBLOCK	bs_17_step3 = {
 /***************************************************************************/
 /* BS-19                                                                   */
 /***************************************************************************/
-WBLOCK	bs_19_step1 = {
+static WBLOCK	bs_19_step1 = {
 	0,
 	6,
 	{0xFE, 0xC0, 0x45, 0x73, 0xE0, 0x40}
 };
-WBLOCK	bs_19_step3 = {
+static WBLOCK	bs_19_step3 = {
 	0,
 	4,
 	{0xFE, 0xC0, 0xF4, 0x44}
@@ -689,12 +689,12 @@ WBLOCK	bs_19_step3 = {
 /***************************************************************************/
 /* BS-21                                                                   */
 /***************************************************************************/
-WBLOCK	bs_21_step1 = {
+static WBLOCK	bs_21_step1 = {
 	0,
 	6,
 	{0xFE, 0xC0, 0x45, 0x99, 0xE0, 0x40}
 };
-WBLOCK	bs_21_step3 = {
+static WBLOCK	bs_21_step3 = {
 	0,
 	4,
 	{0xFE, 0xC0, 0xF4, 0x44}
@@ -702,12 +702,12 @@ WBLOCK	bs_21_step3 = {
 /***************************************************************************/
 /* BS-23                                                                   */
 /***************************************************************************/
-WBLOCK	bs_23_step1 = {
+static WBLOCK	bs_23_step1 = {
 	0,
 	6,
 	{0xFE, 0xC0, 0x45, 0xBF, 0xE0, 0x60}
 };
-WBLOCK	bs_23_step3 = {
+static WBLOCK	bs_23_step3 = {
 	0,
 	4,
 	{0xFE, 0xC0, 0xF4, 0x64}
@@ -716,12 +716,12 @@ WBLOCK	bs_23_step3 = {
 /***************************************************************************/
 /* ND 2                                                                    */
 /***************************************************************************/
-WBLOCK	nd_2_step1 = {
+static WBLOCK	nd_2_step1 = {
 	0,
 	6,
 	{0xFE, 0xC0, 0x46, 0x4D, 0xE0, 0x60}
 };
-WBLOCK	nd_2_step3 = {
+static WBLOCK	nd_2_step3 = {
 	0,
 	4,
 	{0xFE, 0xC0, 0xF4, 0x64}
@@ -730,12 +730,12 @@ WBLOCK	nd_2_step3 = {
 /***************************************************************************/
 /* ND 4                                                                    */
 /***************************************************************************/
-WBLOCK	nd_4_step1 = {
+static WBLOCK	nd_4_step1 = {
 	0,
 	6,
 	{0xFE, 0xC0, 0x46, 0x75, 0xE0, 0x80}
 };
-WBLOCK	nd_4_step3 = {
+static WBLOCK	nd_4_step3 = {
 	0,
 	4,
 	{0xFE, 0xC0, 0xF4, 0x84}
@@ -744,12 +744,12 @@ WBLOCK	nd_4_step3 = {
 /***************************************************************************/
 /* ND 6                                                                    */
 /***************************************************************************/
-WBLOCK	nd_6_step1 = {
+static WBLOCK	nd_6_step1 = {
 	0,
 	6,
 	{0xFE, 0xC0, 0x46, 0x9D, 0xE0, 0x80}
 };
-WBLOCK	nd_6_step3 = {
+static WBLOCK	nd_6_step3 = {
 	0,
 	4,
 	{0xFE, 0xC0, 0xF4, 0x84}
@@ -758,12 +758,12 @@ WBLOCK	nd_6_step3 = {
 /***************************************************************************/
 /* ND 8                                                                    */
 /***************************************************************************/
-WBLOCK	nd_8_step1 = {
+static WBLOCK	nd_8_step1 = {
 	0,
 	6,
 	{0xFE, 0xC0, 0x46, 0xC5, 0xE0, 0x80}
 };
-WBLOCK	nd_8_step3 = {
+static WBLOCK	nd_8_step3 = {
 	0,
 	4,
 	{0xFE, 0xC0, 0xF4, 0x84}
@@ -772,12 +772,12 @@ WBLOCK	nd_8_step3 = {
 /***************************************************************************/
 /* ND 10                                                                   */
 /***************************************************************************/
-WBLOCK	nd_10_step1 = {
+static WBLOCK	nd_10_step1 = {
 	0,
 	6,
 	{0xFE, 0xC0, 0x46, 0xED, 0xE0, 0x80}
 };
-WBLOCK	nd_10_step3 = {
+static WBLOCK	nd_10_step3 = {
 	0,
 	4,
 	{0xFE, 0xC0, 0xF4, 0x84}
@@ -786,12 +786,12 @@ WBLOCK	nd_10_step3 = {
 /***************************************************************************/
 /* ND 12                                                                   */
 /***************************************************************************/
-WBLOCK	nd_12_step1 = {
+static WBLOCK	nd_12_step1 = {
 	0,
 	6,
 	{0xFE, 0xC0, 0x47, 0x15, 0xE0, 0xA0}
 };
-WBLOCK	nd_12_step3 = {
+static WBLOCK	nd_12_step3 = {
 	0,
 	4,
 	{0xFE, 0xC0, 0xF4, 0xA4}
@@ -800,12 +800,12 @@ WBLOCK	nd_12_step3 = {
 /***************************************************************************/
 /* ND 14                                                                   */
 /***************************************************************************/
-WBLOCK	nd_14_step1 = {
+static WBLOCK	nd_14_step1 = {
 	0,
 	6,
 	{0xFE, 0xC0, 0x47, 0x3D, 0xE0, 0xA0}
 };
-WBLOCK	nd_14_step3 = {
+static WBLOCK	nd_14_step3 = {
 	0,
 	4,
 	{0xFE, 0xC0, 0xF4, 0xA4}
@@ -814,12 +814,12 @@ WBLOCK	nd_14_step3 = {
 /***************************************************************************/
 /* ND 16                                                                   */
 /***************************************************************************/
-WBLOCK	nd_16_step1 = {
+static WBLOCK	nd_16_step1 = {
 	0,
 	6,
 	{0xFE, 0xC0, 0x47, 0x65, 0xE0, 0xA0}
 };
-WBLOCK	nd_16_step3 = {
+static WBLOCK	nd_16_step3 = {
 	0,
 	4,
 	{0xFE, 0xC0, 0xF4, 0xA4}
@@ -828,12 +828,12 @@ WBLOCK	nd_16_step3 = {
 /***************************************************************************/
 /* ND 18                                                                   */
 /***************************************************************************/
-WBLOCK	nd_18_step1 = {
+static WBLOCK	nd_18_step1 = {
 	0,
 	6,
 	{0xFE, 0xC0, 0x47, 0x8D, 0xE0, 0xA0}
 };
-WBLOCK	nd_18_step3 = {
+static WBLOCK	nd_18_step3 = {
 	0,
 	4,
 	{0xFE, 0xC0, 0xF4, 0xA4}
@@ -842,12 +842,12 @@ WBLOCK	nd_18_step3 = {
 /***************************************************************************/
 /* ND 20                                                                   */
 /***************************************************************************/
-WBLOCK	nd_20_step1 = {
+static WBLOCK	nd_20_step1 = {
 	0,
 	6,
 	{0xFE, 0xC0, 0x47, 0xB5, 0xE0, 0xC0}
 };
-WBLOCK	nd_20_step3 = {
+static WBLOCK	nd_20_step3 = {
 	0,
 	4,
 	{0xFE, 0xC0, 0xF4, 0xC4}
@@ -856,12 +856,12 @@ WBLOCK	nd_20_step3 = {
 /***************************************************************************/
 /* ND 22                                                                   */
 /***************************************************************************/
-WBLOCK	nd_22_step1 = {
+static WBLOCK	nd_22_step1 = {
 	0,
 	6,
 	{0xFE, 0xC0, 0x47, 0xDD, 0xE0, 0xC0}
 };
-WBLOCK	nd_22_step3 = {
+static WBLOCK	nd_22_step3 = {
 	0,
 	4,
 	{0xFE, 0xC0, 0xF4, 0xC4}
@@ -870,12 +870,12 @@ WBLOCK	nd_22_step3 = {
 /***************************************************************************/
 /* ND 24                                                                   */
 /***************************************************************************/
-WBLOCK	nd_24_step1 = {
+static WBLOCK	nd_24_step1 = {
 	0,
 	6,
 	{0xFE, 0xC0, 0x48, 0x05, 0xE0, 0xC0}
 };
-WBLOCK	nd_24_step3 = {
+static WBLOCK	nd_24_step3 = {
 	0,
 	4,
 	{0xFE, 0xC0, 0xF4, 0xC4}
@@ -884,12 +884,12 @@ WBLOCK	nd_24_step3 = {
 /***************************************************************************/
 /* ND 1                                                                    */
 /***************************************************************************/
-WBLOCK	nd_1_step1 = {
+static WBLOCK	nd_1_step1 = {
 	0,
 	6,
 	{0xFE, 0xC0, 0x46, 0x39, 0xE0, 0x60}
 };
-WBLOCK	nd_1_step3 = {
+static WBLOCK	nd_1_step3 = {
 	0,
 	4,
 	{0xFE, 0xC0, 0xF4, 0x64}
@@ -898,12 +898,12 @@ WBLOCK	nd_1_step3 = {
 /***************************************************************************/
 /* ND 3                                                                    */
 /***************************************************************************/
-WBLOCK	nd_3_step1 = {
+static WBLOCK	nd_3_step1 = {
 	0,
 	6,
 	{0xFE, 0xC0, 0x46, 0x61, 0xE0, 0x80}
 };
-WBLOCK	nd_3_step3 = {
+static WBLOCK	nd_3_step3 = {
 	0,
 	4,
 	{0xFE, 0xC0, 0xF4, 0x84}
@@ -912,12 +912,12 @@ WBLOCK	nd_3_step3 = {
 /***************************************************************************/
 /* ND 5                                                                    */
 /***************************************************************************/
-WBLOCK	nd_5_step1 = {
+static WBLOCK	nd_5_step1 = {
 	0,
 	6,
 	{0xFE, 0xC0, 0x46, 0x89, 0xE0, 0x80}
 };
-WBLOCK	nd_5_step3 = {
+static WBLOCK	nd_5_step3 = {
 	0,
 	4,
 	{0xFE, 0xC0, 0xF4, 0x84}
@@ -926,12 +926,12 @@ WBLOCK	nd_5_step3 = {
 /***************************************************************************/
 /* ND 7                                                                    */
 /***************************************************************************/
-WBLOCK	nd_7_step1 = {
+static WBLOCK	nd_7_step1 = {
 	0,
 	6,
 	{0xFE, 0xC0, 0x46, 0xB1, 0xE0, 0x80}
 };
-WBLOCK	nd_7_step3 = {
+static WBLOCK	nd_7_step3 = {
 	0,
 	4,
 	{0xFE, 0xC0, 0xF4, 0x84}
@@ -940,12 +940,12 @@ WBLOCK	nd_7_step3 = {
 /***************************************************************************/
 /* ND 9                                                                    */
 /***************************************************************************/
-WBLOCK	nd_9_step1 = {
+static WBLOCK	nd_9_step1 = {
 	0,
 	6,
 	{0xFE, 0xC0, 0x46, 0xD9, 0xE0, 0x80}
 };
-WBLOCK	nd_9_step3 = {
+static WBLOCK	nd_9_step3 = {
 	0,
 	4,
 	{0xFE, 0xC0, 0xF4, 0x84}
@@ -954,12 +954,12 @@ WBLOCK	nd_9_step3 = {
 /***************************************************************************/
 /* ND 11                                                                   */
 /***************************************************************************/
-WBLOCK	nd_11_step1 = {
+static WBLOCK	nd_11_step1 = {
 	0,
 	6,
 	{0xFE, 0xC0, 0x47, 0x01, 0xE0, 0xA0}
 };
-WBLOCK	nd_11_step3 = {
+static WBLOCK	nd_11_step3 = {
 	0,
 	4,
 	{0xFE, 0xC0, 0xF4, 0xA4}
@@ -968,12 +968,12 @@ WBLOCK	nd_11_step3 = {
 /***************************************************************************/
 /* ND 13                                                                   */
 /***************************************************************************/
-WBLOCK	nd_13_step1 = {
+static WBLOCK	nd_13_step1 = {
 	0,
 	6,
 	{0xFE, 0xC0, 0x47, 0x29, 0xE0, 0xA0}
 };
-WBLOCK	nd_13_step3 = {
+static WBLOCK	nd_13_step3 = {
 	0,
 	4,
 	{0xFE, 0xC0, 0xF4, 0xA4}
@@ -982,12 +982,12 @@ WBLOCK	nd_13_step3 = {
 /***************************************************************************/
 /* ND 15                                                                   */
 /***************************************************************************/
-WBLOCK	nd_15_step1 = {
+static WBLOCK	nd_15_step1 = {
 	0,
 	6,
 	{0xFE, 0xC0, 0x47, 0x51, 0xE0, 0xA0}
 };
-WBLOCK	nd_15_step3 = {
+static WBLOCK	nd_15_step3 = {
 	0,
 	4,
 	{0xFE, 0xC0, 0xF4, 0xA4}
@@ -996,12 +996,12 @@ WBLOCK	nd_15_step3 = {
 /***************************************************************************/
 /* ND 17                                                                   */
 /***************************************************************************/
-WBLOCK	nd_17_step1 = {
+static WBLOCK	nd_17_step1 = {
 	0,
 	6,
 	{0xFE, 0xC0, 0x47, 0x79, 0xE0, 0xA0}
 };
-WBLOCK	nd_17_step3 = {
+static WBLOCK	nd_17_step3 = {
 	0,
 	4,
 	{0xFE, 0xC0, 0xF4, 0xA4}
@@ -1010,12 +1010,12 @@ WBLOCK	nd_17_step3 = {
 /***************************************************************************/
 /* ND 19                                                                   */
 /***************************************************************************/
-WBLOCK	nd_19_step1 = {
+static WBLOCK	nd_19_step1 = {
 	0,
 	6,
 	{0xFE, 0xC0, 0x47, 0xA1, 0xE0, 0xA0}
 };
-WBLOCK	nd_19_step3 = {
+static WBLOCK	nd_19_step3 = {
 	0,
 	4,
 	{0xFE, 0xC0, 0xF4, 0xA4}
@@ -1024,12 +1024,12 @@ WBLOCK	nd_19_step3 = {
 /***************************************************************************/
 /* ND 21                                                                   */
 /***************************************************************************/
-WBLOCK	nd_21_step1 = {
+static WBLOCK	nd_21_step1 = {
 	0,
 	6,
 	{0xFE, 0xC0, 0x47, 0xC9, 0xE0, 0xC0}
 };
-WBLOCK	nd_21_step3 = {
+static WBLOCK	nd_21_step3 = {
 	0,
 	4,
 	{0xFE, 0xC0, 0xF4, 0xC4}
@@ -1038,12 +1038,12 @@ WBLOCK	nd_21_step3 = {
 /***************************************************************************/
 /* ND 23                                                                   */
 /***************************************************************************/
-WBLOCK	nd_23_step1 = {
+static WBLOCK	nd_23_step1 = {
 	0,
 	6,
 	{0xFE, 0xC0, 0x47, 0xF1, 0xE0, 0xC0}
 };
-WBLOCK	nd_23_step3 = {
+static WBLOCK	nd_23_step3 = {
 	0,
 	4,
 	{0xFE, 0xC0, 0xF4, 0xC4}
