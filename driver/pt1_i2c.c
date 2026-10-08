@@ -224,6 +224,10 @@ static	int		i2c_lock(void __iomem *regs, __u32 firstval, __u32  secondval, __u32
 	// RAMがロックされた？
 	for(lp = 0 ; lp < XC3S_PCI_CLOCK ; lp++){
 		val = readl(regs);
+		if(PT1_MMIO_DEAD(val)){
+			pr_err("device not responding (i2c_lock)\n");
+			return -ENODEV ;
+		}
 		if((val & lockval)){
 			return 0 ;
 		}
@@ -241,7 +245,12 @@ static	int		i2c_lock_one(void __iomem *regs, __u32 firstval, __u32 lockval)
 	int		lp ;
 	int		lp2 ;
 
-	val = (readl(regs) & lockval);
+	val = readl(regs);
+	if(PT1_MMIO_DEAD(val)){
+		pr_err("device not responding (i2c_lock_one)\n");
+		return -ENODEV ;
+	}
+	val &= lockval;
 	writel(firstval, regs);
 
 	/*
@@ -254,6 +263,10 @@ static	int		i2c_lock_one(void __iomem *regs, __u32 firstval, __u32 lockval)
 	for(lp = 0 ; lp < 10 ; lp++){
 		for(lp2 = 0 ; lp2 < 1024 ; lp2++){
 			val2 = readl(regs);
+			if(PT1_MMIO_DEAD(val2)){
+				pr_err("device not responding (i2c_lock_one)\n");
+				return -ENODEV ;
+			}
 			// 最初に取得したデータと逆になればOK
 			if(((val2 & lockval) != val)){
 				return 0 ;
@@ -273,6 +286,10 @@ static	int		i2c_unlock(void __iomem *regs, int lockval)
 
 	for(lp = 0 ; lp < 3 ; lp++){
 		val = readl(regs);
+		if(PT1_MMIO_DEAD(val)){
+			pr_err("device not responding (i2c_unlock)\n");
+			return -ENODEV ;
+		}
 		if((val &lockval)){
 			return 0 ;
 		}
@@ -513,13 +530,6 @@ void	i2c_write(void __iomem *regs, struct mutex *lock, WBLOCK *wblock)
 
 	// ロックする
 	mutex_lock(lock);
-#if 0
-	pr_info("Addr=%x(%d)\n", wblock->addr, wblock->count);
-	for(lp = 0 ; lp  < wblock->count ; lp++){
-		pr_info("%x\n", wblock->value[lp]);
-	}
-	pr_info("\n");
-#endif
 
 	blockwrite(regs, wblock);
 	writel(FIFO_GO, regs + FIFO_GO_ADDR);
@@ -533,6 +543,10 @@ void	i2c_write(void __iomem *regs, struct mutex *lock, WBLOCK *wblock)
 	 */
 	for(lp = 0 ; lp < 100 ; lp++){
 		val = readl(regs + FIFO_RESULT_ADDR);
+		if(PT1_MMIO_DEAD(val)){
+			pr_err("device not responding (i2c_write)\n");
+			break ;
+		}
 		if(!(val & FIFO_DONE)){
 			break ;
 		}
@@ -549,13 +563,6 @@ __u32	i2c_read(void __iomem *regs, struct mutex *lock, WBLOCK *wblock, int size)
 
 	// ロックする
 	mutex_lock(lock);
-#if 0
-	pr_info("Addr=%x:%d:%d\n", wblock->addr, wblock->count, size);
-	for(lp = 0 ; lp  < wblock->count ; lp++){
-		pr_info("%x\n", wblock->value[lp]);
-	}
-	pr_info("\n");
-#endif
 	blockread(regs, wblock, size);
 
 	writel(FIFO_GO, regs + FIFO_GO_ADDR);
@@ -564,6 +571,10 @@ __u32	i2c_read(void __iomem *regs, struct mutex *lock, WBLOCK *wblock, int size)
 	for(lp = 0 ; lp < 100 ; lp++){
 		schedule_timeout_uninterruptible(msecs_to_jiffies(1));
 		val = readl(regs + FIFO_RESULT_ADDR);
+		if(PT1_MMIO_DEAD(val)){
+			pr_err("device not responding (i2c_read)\n");
+			break ;
+		}
 		if(!(val & FIFO_DONE)){
 			break ;
 		}
