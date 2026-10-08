@@ -58,6 +58,15 @@ sudo insmod pt1_drv.ko dma_cpu=2 dma_rt=1 ring_count=65536
 #             close時のDrop統計は、drop/overflow/エラーがあるとき(またはdebug=2)のみ出力
 # ログはすべてカーネルログに "pt1_drv: " 接頭辞付きで出力されます（journalctl -k -g pt1_drv）
 
+受信状態の確認（debugfs。root で実行）
+sudo cat /sys/kernel/debug/pt1/card0/stats
+# チャンネルごとに、選局状態(tuned_freq / slot / tsid)と TS 品質を表示します。
+#   tei:    TEI(伝送エラー)フラグ付きパケット数と割合。受信状態が悪いと増えます
+#   cc_err: 連続性カウンタ(CC)の飛び回数。パケット欠落を示します
+#   drop:   DMA/リング層のドロップ（受信状態ではなく処理が追いつかない場合に増加）
+# tei が多く drop が0なら受信環境(アンテナ/電界)、drop が多く tei が少なければ
+# 処理側の問題、と切り分けられます。統計はデバイスを open するたびに0から数えます。
+
 TSID指定（BS/CS）
 recisdb の --tsid オプションに対応しています（px4_drv 準拠）。
 SET_CHANNEL ioctl の slot フィールドが 0〜7 なら従来どおり相対TS番号、

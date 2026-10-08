@@ -1,0 +1,33 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  module:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # GA(6.8系) と HWE(新しめ) の両方のヘッダを入れ、見つかった全カーネルでビルドする
+      - name: Install kernel headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential \
+            linux-headers-generic linux-headers-generic-hwe-24.04
+
+      - name: Build against every installed kernel
+        run: |
+          set -e
+          cd driver
+          ls -d /lib/modules/*/build
+          for b in /lib/modules/*/build; do
+            kver=$(basename "$(dirname "$b")")
+            echo "::group::$kver"
+            make KVER="$kver" clean
+            make KVER="$kver" VERBOSITY=1 EXTRA_CFLAGS="-Wformat=2 -Werror" all
+            test -f pt1_drv.ko
+            echo "::endgroup::"
+          done

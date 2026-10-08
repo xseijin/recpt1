@@ -42,6 +42,7 @@
 #include <linux/ioctl.h>
 #include <linux/vmalloc.h>
 #include <linux/debugfs.h>
+#include <linux/math64.h>
 
 #include        "pt1_com.h"
 #include        "pt1_pci.h"
@@ -302,7 +303,25 @@ struct  _PT1_CHANNEL{
         u64                     wakeup_rate_snap;
         /* starvation 防止: 最後に wake した jiffies（10Hz fallback 用） */
         unsigned long           last_wake_jiffies;
+        /*
+         * TS パケット単位の受信品質統計 (pt1_ring_write で数える)。
+         * DMA/ring 層の drop とは別に「受信状態が悪い」ことを切り分けるためのもの。
+         * producer (DMA thread) のみが書く。ts_packets は 64bit 単独書き込み。
+         */
+        u64                     ts_packets;             /* 受信 TS パケット総数 */
+        atomic64_t              ts_tei;                 /* TEI が立ったパケット数 */
+        atomic64_t              ts_cc_err;              /* 連続性カウンタ(CC)の飛び回数 */
+        u8                      last_cc[8192];          /* PID 別の直前 CC (0xff=未観測) */
+        /* 最後に成功した選局の記録 (debugfs 表示用)。-1 = 未選局/不明 */
+        int                     tuned_freq;
+        int                     tuned_slot;
+        int                     tuned_tsid;
 };
+
+static void pt1_cc_reset(PT1_CHANNEL *channel)
+{
+        memset(channel->last_cc, 0xff, sizeof(channel->last_cc));
+}
 
 // I2Cアドレス(video0, 1 = ISDB-S) (video2, 3 = ISDB-T)
 static int             i2c_address[MAX_CHANNEL] = {T0_ISDB_S, T1_ISDB_S, T0_ISDB_T, T1_ISDB_T};
@@ -505,6 +524,7 @@ static  void    reset_dma(PT1_DEVICE *dev_conf)
                 ch->packet_size  = 0;
                 ch->sync_hunting = false;
                 ch->hunt_size    = 0;
+                pt1_cc_reset(ch);
         }
 
         // データ初期化（sentinel word をゼロクリア）
@@ -548,10 +568,56 @@ static  void    reset_dma(PT1_DEVICE *dev_conf)
  * smp_store_release(head) によって producer 側の書き込み完了を
  * consumer 側に可視化する。ring が満杯の場合は drop カウントだけ増やして捨てる。
  */
+/*
+ * pt1_ts_account - 1パケット分の TEI / CC を数える (producer 専用)。
+ * ヘッダ 4byte と PID 別テーブル 1 要素を触るだけなので軽量。
+ *   - TEI: byte1 bit7。復調器が訂正できなかったパケット。
+ *   - CC : 同一 PID で CC が +1 でも同値(重複)でもなければ飛びとみなす。
+ *          TEI 付きのパケットは中身が信頼できないため CC 判定から除外する。
+ *          NULL パケット(0x1fff)、ペイロード無し(AFC bit0=0)、
+ *          discontinuity_indicator 付きは判定しない(後者は基準を捨てる)。
+ */
+static void pt1_ts_account(PT1_CHANNEL *channel, const u8 *pkt)
+{
+        u16 pid;
+        u8 cc, afc, last;
+
+        WRITE_ONCE(channel->ts_packets, channel->ts_packets + 1);
+
+        if (unlikely(pkt[1] & 0x80)) {
+                atomic64_inc(&channel->ts_tei);
+                return;
+        }
+
+        pid = ((pkt[1] & 0x1f) << 8) | pkt[2];
+        if (pid == 0x1fff)
+                return;
+
+        afc = (pkt[3] >> 4) & 0x3;
+        cc  = pkt[3] & 0xf;
+
+        if (afc & 0x2) {
+                /* adaptation field: discontinuity_indicator なら基準をリセット */
+                if (pkt[4] > 0 && (pkt[5] & 0x80)) {
+                        channel->last_cc[pid] = (afc & 0x1) ? cc : 0xff;
+                        return;
+                }
+        }
+        if (!(afc & 0x1))
+                return;
+
+        last = channel->last_cc[pid];
+        if (last != 0xff && cc != last && cc != ((last + 1) & 0xf))
+                atomic64_inc(&channel->ts_cc_err);
+        channel->last_cc[pid] = cc;
+}
+
 static void pt1_ring_write(PT1_CHANNEL *channel, const u8 *pkt)
 {
         struct ts_ring *ring = &channel->ring;
         u32 next;
+
+        pt1_ts_account(channel, pkt);
 
         next = (ring->head + 1) & ring_mask;
         if (unlikely(next == READ_ONCE(ring->tail))) {
@@ -890,6 +956,7 @@ static  int             pt1_thread(void *data)
                                                 channel->packet_size = 0;
                                                 channel->sync_hunting = true;
                                                 channel->hunt_size = 0;
+                                                pt1_cc_reset(channel);
                                                 continue;
                                         }
 
@@ -1160,6 +1227,14 @@ static int pt1_open(struct inode *inode, struct file *file)
                          */
                         channel->sync_hunting = false;
                         channel->hunt_size = 0;
+                        /* TS 品質統計は open ごとに 0 から数える */
+                        pt1_cc_reset(channel);
+                        WRITE_ONCE(channel->ts_packets, 0);
+                        atomic64_set(&channel->ts_tei, 0);
+                        atomic64_set(&channel->ts_cc_err, 0);
+                        channel->tuned_freq = -1;
+                        channel->tuned_slot = -1;
+                        channel->tuned_tsid = -1;
                         file->private_data = channel;
                         /*
                          * FIX: この fd が close されるまで channel の実メモリを
@@ -1450,6 +1525,13 @@ static  int             SetFreq(PT1_CHANNEL *channel, FREQUENCY *freq)
                                 if(rc < 0){
                                         return -EIO ;
                                 }
+                                pt1_cc_reset(channel);
+                                WRITE_ONCE(channel->tuned_freq, freq->frequencyno);
+                                WRITE_ONCE(channel->tuned_slot, freq->slot);
+                                WRITE_ONCE(channel->tuned_tsid,
+                                           (freq->slot >= 0 && freq->slot < MAX_BS_TS_ID)
+                                           ? (int)tmcc.ts_id[freq->slot].ts_id
+                                           : (int)(__u16)freq->slot);
                         }
                         break ;
                 case CHANNEL_TYPE_ISDB_T:
@@ -1460,6 +1542,10 @@ static  int             SetFreq(PT1_CHANNEL *channel, FREQUENCY *freq)
                                                 freq->frequencyno, freq->slot) < 0){
                                         return -EINVAL ;
                                 }
+                                pt1_cc_reset(channel);
+                                WRITE_ONCE(channel->tuned_freq, freq->frequencyno);
+                                WRITE_ONCE(channel->tuned_slot, freq->slot);
+                                WRITE_ONCE(channel->tuned_tsid, -1);
                         }
         }
         return 0 ;
@@ -1498,6 +1584,10 @@ static  int             SetFreqByTsid(PT1_CHANNEL *channel, FREQUENCY_TSID *freq
                 /* 指定TSIDがこの周波数に存在しない、あるいはロック失敗 */
                 return -EIO ;
         }
+        pt1_cc_reset(channel);
+        WRITE_ONCE(channel->tuned_freq, freq->frequencyno);
+        WRITE_ONCE(channel->tuned_slot, -1);
+        WRITE_ONCE(channel->tuned_tsid, freq->tsid);
         return 0 ;
 }
 
@@ -1821,6 +1911,25 @@ static int pt1_stats_show(struct seq_file *m, void *v)
                            READ_ONCE(ch->max_fill),
                            total_wakeups, wakeups_per_sec);
 
+                {
+                        u64 pk  = READ_ONCE(ch->ts_packets);
+                        u64 tei = atomic64_read(&ch->ts_tei);
+                        u64 cc  = atomic64_read(&ch->ts_cc_err);
+                        /* TEI 率は 0.01% 単位の整数で表示 (浮動小数は使えない) */
+                        u64 ppm = pk ? div64_u64(tei * 10000, pk) : 0;
+
+                        seq_printf(m, "  %s tuned_freq=%d slot=%d tsid=",
+                                   ch->type == CHANNEL_TYPE_ISDB_S ? "ISDB-S" : "ISDB-T",
+                                   READ_ONCE(ch->tuned_freq), READ_ONCE(ch->tuned_slot));
+                        if (READ_ONCE(ch->tuned_tsid) >= 0)
+                                seq_printf(m, "0x%04x", READ_ONCE(ch->tuned_tsid));
+                        else
+                                seq_puts(m, "-");
+                        seq_printf(m, " valid=%u\n", READ_ONCE(ch->valid));
+                        seq_printf(m, "  ts_packets=%llu tei=%llu (%llu.%02llu%%) cc_err=%llu\n",
+                                   pk, tei, ppm / 100, ppm % 100, cc);
+                }
+
                 /* ring occupancy histogram */
                 seq_printf(m, "  hist 0-25%%=%lld 25-50%%=%lld"
                            " 50-75%%=%lld 75-100%%=%lld\n",
@@ -2103,6 +2212,10 @@ static int pt1_pci_init_one (struct pci_dev *pdev,
                 // 実際のチューナ番号
                 channel->channel = real_channel[lp] ;
                 channel->ptr = dev_conf ;
+                pt1_cc_reset(channel);
+                channel->tuned_freq = -1;
+                channel->tuned_slot = -1;
+                channel->tuned_tsid = -1;
                 WRITE_ONCE(channel->size, 0);
                 dev_conf->channel[lp] = channel ;
 
