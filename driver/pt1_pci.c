@@ -2475,7 +2475,8 @@ static void pt1_pci_remove_one(struct pci_dev *pdev)
                 writel(0x08080000, dev_conf->regs);
                 for(lp = 0 ; lp < 10 ; lp++){
                         val = readl(dev_conf->regs);
-                        if(!(val & (1 << 6))){
+                        /* カードが消えていると全ビット1が返り、BUSY が立ったままに見える */
+                        if(PT1_MMIO_DEAD(val) || !(val & DMA_BUSY)){
                                 break ;
                         }
                         msleep(100);
