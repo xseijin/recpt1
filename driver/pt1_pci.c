@@ -43,6 +43,7 @@
 #include <linux/vmalloc.h>
 #include <linux/debugfs.h>
 #include <linux/math64.h>
+#include <linux/version.h>
 
 #include        "pt1_com.h"
 #include        "pt1_pci.h"
@@ -2649,12 +2650,12 @@ static int __init pt1_pci_init(void)
         pr_info("ring_count=%u (~%uKB/ch)\n",
                 ring_count, ring_count * PACKET_SIZE / 1024);
 
-        /*
-         * class_create() は Linux 6.4 で THIS_MODULE 引数が削除された。
-         * 対象カーネルが 6.8(Ubuntu 24.04) 以降のみになったため
-         * LINUX_VERSION_CODE 分岐は不要（常に真）。削除して単純化。
-         */
+        /* class_create() は Linux 6.4 で THIS_MODULE 引数が削除された */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,4,0)
         pt1video_class = class_create(DRIVERNAME);
+#else
+        pt1video_class = class_create(THIS_MODULE, DRIVERNAME);
+#endif
         if (IS_ERR(pt1video_class))
                 return PTR_ERR(pt1video_class);
         return pci_register_driver(&pt1_driver);
