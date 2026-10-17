@@ -1009,9 +1009,14 @@ static  int             pt1_thread(void *data)
                  * 短め sleep + watermark batching の方が安定する。
                  * usleep_range は hrtimer ベースで HZ=250 環境（N100 等）でも
                  * msleep(20) のような 24〜28ms への膨張が起きない。
+                 *
+                 * TASK_IDLE で寝る: 通常の usleep_range は D 状態(TASK_UNINTERRUPTIBLE)
+                 * で寝るため load average に数えられ、DMA thread が常時 load を
+                 * 押し上げてしまう。TASK_IDLE は TASK_NOLOAD 付きで load に数えられず、
+                 * kthread_stop() の wake_up_process() では従来どおり起きる。
                  */
                 try_to_freeze();
-                usleep_range(10000, 15000);
+                usleep_range_state(10000, 15000, TASK_IDLE);
         }
 out:
         return 0 ;
@@ -1035,7 +1040,13 @@ static int pt1_watchdog(void *data)
 
         set_freezable();
         while (!kthread_should_stop()) {
-                msleep(500);
+                /*
+                 * msleep は D 状態で寝て load average に数えられる(かつ
+                 * kthread_stop() で起こされても最大 500ms 寝続ける)。
+                 * schedule_timeout_idle は TASK_IDLE で load に数えられず、
+                 * kthread_stop() の wake_up_process() で即座に起きる。
+                 */
+                schedule_timeout_idle(msecs_to_jiffies(500));
 
                 /* systemd suspend / hibernate との協調 */
                 try_to_freeze();
