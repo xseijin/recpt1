@@ -238,7 +238,11 @@ static int		bs_frequency(void __iomem *regs, struct mutex *lock, int addr, int c
 	WBLOCK	wk;
 	__u32	val ;
 
-	if(channel >= MAX_BS_CHANNEL){
+	/*
+	 * FIX: channel は ioctl から渡される符号付き int。上限だけの確認では
+	 * 負の値が通り、bs_pll[channel] が配列の手前を指してしまう。
+	 */
+	if(channel < 0 || channel >= MAX_BS_CHANNEL){
 		return -EIO ;
 	}
 	// ISDB-S PLLロック
@@ -336,7 +340,7 @@ int		bs_tune(void __iomem *regs, struct mutex *lock, int addr, int channel, ISDB
 		__u32	tsid;
 	}ts_id ;
 
-	if(channel >= MAX_BS_CHANNEL){
+	if(channel < 0 || channel >= MAX_BS_CHANNEL){
 		pr_warn("Invalid Channel(%d)\n", channel);
 		return -EIO ;
 	}
@@ -462,7 +466,7 @@ int		isdb_t_frequency(void __iomem *regs, struct mutex *lock, int addr, int chan
 		__u16	freq;
 	}freq[2] ;
 
-	if(channel >= MAX_ISDB_T_CHANNEL){
+	if(channel < 0 || channel >= MAX_ISDB_T_CHANNEL){
 		return -EIO ;
 	}
 

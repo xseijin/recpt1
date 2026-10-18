@@ -2648,6 +2648,8 @@ static struct pci_driver pt1_driver = {
 
 static int __init pt1_pci_init(void)
 {
+        int rc;
+
         pr_info("%s", version);
 
         /* ring_count の検証: power of 2、かつ 256〜1048576 の範囲 */
@@ -2669,7 +2671,15 @@ static int __init pt1_pci_init(void)
 #endif
         if (IS_ERR(pt1video_class))
                 return PTR_ERR(pt1video_class);
-        return pci_register_driver(&pt1_driver);
+
+        /*
+         * FIX: pci_register_driver() が失敗しても module_exit は呼ばれないため、
+         * ここで class を破棄しないと /sys/class/pt1video が残ってしまう。
+         */
+        rc = pci_register_driver(&pt1_driver);
+        if (rc)
+                class_destroy(pt1video_class);
+        return rc;
 }
 
 
