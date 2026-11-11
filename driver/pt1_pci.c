@@ -1692,6 +1692,12 @@ static long pt1_do_ioctl(struct file  *file, unsigned int cmd, unsigned long arg
                         }
                         return 0 ;
                 case LNB_ENABLE:
+                        /*
+                         * LNB はカード単位の BS/CS 用給電。地上波(ISDB-T)の fd から
+                         * 呼ばれても何もしない(同じカードで録画中の BS/CS を巻き込まない)。
+                         */
+                        if (channel->type != CHANNEL_TYPE_ISDB_S)
+                                return 0 ;
                         count = count_used_bs_tuners(channel->ptr);
                         if(count <= 1) {
                                 lnb_usr = (int)arg0;
@@ -1712,6 +1718,9 @@ static long pt1_do_ioctl(struct file  *file, unsigned int cmd, unsigned long arg
                         }
                         return 0 ;
                 case LNB_DISABLE:
+                        /* 地上波(ISDB-T)の fd では何もしない (LNB_ENABLE と同様) */
+                        if (channel->type != CHANNEL_TYPE_ISDB_S)
+                                return 0 ;
                         count = count_used_bs_tuners(channel->ptr);
                         if(count <= 1) {
                                 settuner_reset(channel->ptr->regs, channel->ptr->cardtype, LNB_OFF, TUNER_POWER_ON_RESET_DISABLE);
