@@ -185,6 +185,7 @@ typedef struct  _pt1_device{
         DMA_CONTROL             *dmactl[DMA_RING_SIZE];
         PT1_CHANNEL             *channel[MAX_CHANNEL];
         int                     cardtype;
+        int                     lnb_level;      /* 現在の LNB 給電レベル (LNB_OFF/11V/15V) */
         unsigned long last_reset;
         /* DMA watchdog */
         atomic64_t              dma_counter ____cacheline_aligned;
@@ -1714,7 +1715,10 @@ static long pt1_do_ioctl(struct file  *file, unsigned int cmd, unsigned long arg
                                         return -EINVAL;
                                 }
                                 settuner_reset(channel->ptr->regs, channel->ptr->cardtype, lnb_eff, TUNER_POWER_ON_RESET_DISABLE);
-                                pr_info("LNB on %s\n", voltage[lnb_eff]);
+                                /* 実際に給電するとき(0V 以外)だけログを出す */
+                                if (lnb_eff != LNB_OFF)
+                                        pr_info("LNB on %s\n", voltage[lnb_eff]);
+                                channel->ptr->lnb_level = lnb_eff;
                         }
                         return 0 ;
                 case LNB_DISABLE:
@@ -1724,7 +1728,10 @@ static long pt1_do_ioctl(struct file  *file, unsigned int cmd, unsigned long arg
                         count = count_used_bs_tuners(channel->ptr);
                         if(count <= 1) {
                                 settuner_reset(channel->ptr->regs, channel->ptr->cardtype, LNB_OFF, TUNER_POWER_ON_RESET_DISABLE);
-                                pr_info("LNB off\n");
+                                /* 給電していたとき(ON→OFF)だけログを出す */
+                                if (channel->ptr->lnb_level != LNB_OFF)
+                                        pr_info("LNB off\n");
+                                channel->ptr->lnb_level = LNB_OFF;
                         }
                         return 0 ;
         }
