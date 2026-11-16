@@ -94,7 +94,7 @@ module_param(dma_cpu, int, 0444);
 module_param(dma_rt, bool, 0644);
 module_param(ring_count, uint, 0444);
 MODULE_PARM_DESC(debug, "log verbosity (0:quiet 1:normal(default) 2:verbose), changeable at runtime");
-MODULE_PARM_DESC(lnb, "LNB level (0:OFF 1:+11V 2:+15V)");
+MODULE_PARM_DESC(lnb, "LNB level (0:OFF/manual via ioctl 1:+11V 2:+15V; 1/2 = on while any BS/CS tuner of the card is open)");
 MODULE_PARM_DESC(power_save, "PT2: cut power to idle tuners (0:off 1:on, default 0). Tuning start gets slower");
 MODULE_PARM_DESC(dma_cpu, "CPU number to pin DMA/watchdog threads (-1=no pinning, default)");
 MODULE_PARM_DESC(dma_rt, "Elevate DMA thread to SCHED_FIFO(low) (default=0/OFF, use with caution on N100)");
@@ -189,6 +189,7 @@ typedef struct  _pt1_device{
         int                     cardtype;
         int                     lnb_level;      /* 現在の LNB 給電レベル (LNB_OFF/11V/15V) */
         PT1_POWER               power;          /* 電源レジスタの状態 (LNB/チューナー/PT2 レール) */
+        struct mutex            lnb_lock;       /* LNB の切り替えと lnb_level を直列化 */
         unsigned long last_reset;
         /* DMA watchdog */
         atomic64_t              dma_counter ____cacheline_aligned;
@@ -1133,6 +1134,42 @@ static void pt1_channel_free(struct kref *kref)
         kref_put(&dev_conf->refcount, pt1_device_free);
 }
 
+static const char *const lnb_voltage[] = {"0V", "11V", "15V"};
+
+/* LNB 給電レベルを設定する。dev->lnb_lock を保持して呼ぶ。実際に変わるときだけログを出す */
+static void pt1_lnb_set_locked(PT1_DEVICE *dev, int level)
+{
+        settuner_reset(dev->regs, dev->cardtype, &dev->power, level,
+                       TUNER_POWER_ON_RESET_DISABLE);
+        if (level != LNB_OFF)
+                pr_info("LNB on %s\n", lnb_voltage[level]);
+        else if (dev->lnb_level != LNB_OFF)
+                pr_info("LNB off\n");
+        dev->lnb_level = level;
+}
+
+/* lnb モジュールパラメータが 11V/15V のとき、BS/CS の open/close に連動して自動制御する */
+static bool pt1_lnb_auto(void)
+{
+        return lnb == LNB_11V || lnb == LNB_15V;
+}
+
+static int count_used_bs_tuners(PT1_DEVICE *device)
+{
+        int count = 0;
+        int i;
+
+        for(i=0; i<MAX_CHANNEL; i++) {
+                if(device && device->channel[i] &&
+                   device->channel[i]->type == CHANNEL_TYPE_ISDB_S &&
+                   device->channel[i]->valid)
+                        count++;
+        }
+
+        pt1_log(2, "used bs tuners on %p = %d\n", device, count);
+        return count;
+}
+
 static int pt1_open(struct inode *inode, struct file *file)
 {
         int             major = imajor(inode);
@@ -1213,6 +1250,18 @@ static int pt1_open(struct inode *inode, struct file *file)
 
                         if(rc != 0){
                                 return rc ;
+                        }
+
+                        /*
+                         * lnb=1/2 のとき、BS/CS を開いたら自動で LNB 給電を開始する
+                         * (既に給電中なら何もしない)。lnb_lock は release 側の
+                         * 「最後の BS/CS が閉じたら OFF」と直列化されている。
+                         */
+                        if (channel->type == CHANNEL_TYPE_ISDB_S && pt1_lnb_auto()) {
+                                mutex_lock(&channel->ptr->lnb_lock);
+                                if (channel->ptr->lnb_level == LNB_OFF)
+                                        pt1_lnb_set_locked(channel->ptr, lnb);
+                                mutex_unlock(&channel->ptr->lnb_lock);
                         }
 
                         /* wake tuner up */
@@ -1304,6 +1353,14 @@ static int pt1_release(struct inode *inode, struct file *file)
                                           &channel->ptr->power, &channel->ptr->lock,
                                           channel->address, channel->type, TYPE_SLEEP);
                 msleep(100);
+
+                /* lnb=1/2 のとき、同じカードの BS/CS が全て閉じたら LNB を OFF にする */
+                if (channel->type == CHANNEL_TYPE_ISDB_S && pt1_lnb_auto()) {
+                        mutex_lock(&channel->ptr->lnb_lock);
+                        if (count_used_bs_tuners(channel->ptr) == 0)
+                                pt1_lnb_set_locked(channel->ptr, LNB_OFF);
+                        mutex_unlock(&channel->ptr->lnb_lock);
+                }
         } else {
                 WRITE_ONCE(channel->valid, FALSE);
         }
@@ -1609,22 +1666,6 @@ static  int             SetFreqByTsid(PT1_CHANNEL *channel, FREQUENCY_TSID *freq
         return 0 ;
 }
 
-static int count_used_bs_tuners(PT1_DEVICE *device)
-{
-        int count = 0;
-        int i;
-
-        for(i=0; i<MAX_CHANNEL; i++) {
-                if(device && device->channel[i] &&
-                   device->channel[i]->type == CHANNEL_TYPE_ISDB_S &&
-                   device->channel[i]->valid)
-                        count++;
-        }
-
-        pt1_log(2, "used bs tuners on %p = %d\n", device, count);
-        return count;
-}
-
 static long pt1_do_ioctl(struct file  *file, unsigned int cmd, unsigned long arg0)
 {
         PT1_CHANNEL     *channel = file->private_data;
@@ -1632,7 +1673,6 @@ static long pt1_do_ioctl(struct file  *file, unsigned int cmd, unsigned long arg
         unsigned long   dummy;
         void __user     *arg = (void __user *)arg0;
         int             lnb_eff, lnb_usr;
-        char *voltage[] = {"0V", "11V", "15V"};
         int count;
 
         /* device_dead: 操作不可 */
@@ -1708,22 +1748,14 @@ static long pt1_do_ioctl(struct file  *file, unsigned int cmd, unsigned long arg
                         if(count <= 1) {
                                 lnb_usr = (int)arg0;
                                 lnb_eff = lnb_usr ? lnb_usr : lnb;
-                                /*
-                                 * FIX: lnb_eff (ユーザー指定値) の範囲チェックが無く、
-                                 * voltage[] (要素数3, index 0..2) を範囲外添字で
-                                 * 読んでしまう可能性があった。不正な値が渡されると
-                                 * printk("%s", voltage[lnb_eff]) が任意のメモリを
-                                 * 文字列として読み、kernel oops を起こし得る。
-                                 */
+                                /* 範囲外の値は不正 (lnb_voltage[] の範囲外参照を防ぐ) */
                                 if (lnb_eff < LNB_OFF || lnb_eff > LNB_15V) {
                                         pr_err("LNB_ENABLE invalid level(%d)\n", lnb_eff);
                                         return -EINVAL;
                                 }
-                                settuner_reset(channel->ptr->regs, channel->ptr->cardtype, &channel->ptr->power, lnb_eff, TUNER_POWER_ON_RESET_DISABLE);
-                                /* 実際に給電するとき(0V 以外)だけログを出す */
-                                if (lnb_eff != LNB_OFF)
-                                        pr_info("LNB on %s\n", voltage[lnb_eff]);
-                                channel->ptr->lnb_level = lnb_eff;
+                                mutex_lock(&channel->ptr->lnb_lock);
+                                pt1_lnb_set_locked(channel->ptr, lnb_eff);
+                                mutex_unlock(&channel->ptr->lnb_lock);
                         }
                         return 0 ;
                 case LNB_DISABLE:
@@ -1732,11 +1764,9 @@ static long pt1_do_ioctl(struct file  *file, unsigned int cmd, unsigned long arg
                                 return 0 ;
                         count = count_used_bs_tuners(channel->ptr);
                         if(count <= 1) {
-                                settuner_reset(channel->ptr->regs, channel->ptr->cardtype, &channel->ptr->power, LNB_OFF, TUNER_POWER_ON_RESET_DISABLE);
-                                /* 給電していたとき(ON→OFF)だけログを出す */
-                                if (channel->ptr->lnb_level != LNB_OFF)
-                                        pr_info("LNB off\n");
-                                channel->ptr->lnb_level = LNB_OFF;
+                                mutex_lock(&channel->ptr->lnb_lock);
+                                pt1_lnb_set_locked(channel->ptr, LNB_OFF);
+                                mutex_unlock(&channel->ptr->lnb_lock);
                         }
                         return 0 ;
         }
@@ -2111,6 +2141,7 @@ static int pt1_pci_init_one (struct pci_dev *pdev,
          */
         kref_init(&dev_conf->refcount);
         pt1_power_init(&dev_conf->power);
+        mutex_init(&dev_conf->lnb_lock);
         for (i = 0; i < DMA_RING_SIZE; i++) {
                 dev_conf->dmactl[i] = kzalloc(sizeof(DMA_CONTROL), GFP_KERNEL);
                 if(!dev_conf->dmactl[i]){
