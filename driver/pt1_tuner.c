@@ -8,6 +8,7 @@
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/mutex.h>
+#include <linux/delay.h>
 
 #include <asm/io.h>
 #include <asm/irq.h>
@@ -47,10 +48,39 @@ static isdb_t_freq_add_table	isdb_t_freq_add[10] = {
 	{112, 0x80E4}				// 101～112迄
 };
 
-void	settuner_reset(void __iomem *regs, int cardtype, __u32 lnb, __u32 tuner)
+void	pt1_power_init(PT1_POWER *pw)
+{
+	mutex_init(&pw->lock);
+	pw->lnb      = LNB_OFF;
+	pw->tuner    = TUNER_POWER_OFF;
+	pw->off_mask = 0;			// 全レール ON (従来動作)
+}
+
+/* off_mask から PT2 の電源レールのビットを作る */
+static __u32	pt2_rail_bits(unsigned int off)
+{
+	__u32	val = 0;
+
+	if(!(off & PT2_RAIL_S0))
+		val |= (1 << BIT_33A1);
+	if(!(off & PT2_RAIL_S1))
+		val |= (1 << BIT_33A2);
+	if(!(off & PT2_RAIL_T0))
+		val |= (1 << BIT_5A1);
+	if(!(off & PT2_RAIL_T1))
+		val |= (1 << BIT_5A2);
+	/* 5A_ は地上波側の共通電源。どちらかの地上波チューナーが ON なら必要 */
+	if(!(off & PT2_RAIL_T0) || !(off & PT2_RAIL_T1))
+		val |= (1 << BIT_5A_);
+	return val;
+}
+
+/* pw->lock を保持して呼ぶ。LNB・チューナー電源・レールを合成して書き込む */
+static void	pt1_power_write(void __iomem *regs, int cardtype, PT1_POWER *pw)
 {
 	__u32	val = TUNER_POWER_OFF;
-	switch(lnb){
+
+	switch(pw->lnb){
 		case LNB_11V:
 			val = (1 << BIT_LNB_DOWN);
 			break ;
@@ -60,7 +90,7 @@ void	settuner_reset(void __iomem *regs, int cardtype, __u32 lnb, __u32 tuner)
 	}
 
 	if(cardtype == PT1) {
-		switch(tuner){
+		switch(pw->tuner){
 		case TUNER_POWER_ON_RESET_ENABLE:
 			val |= (1 << BIT_TUNER);
 			break;
@@ -70,28 +100,66 @@ void	settuner_reset(void __iomem *regs, int cardtype, __u32 lnb, __u32 tuner)
 		}
 	}
 	else if(cardtype == PT2) {
-		switch(tuner){
+		switch(pw->tuner){
 		case TUNER_POWER_ON_RESET_ENABLE:
-			val |= (1 << BIT_TUNER)
-				| (1 << BIT_33A1)
-				| (1 << BIT_33A2)
-				| (1 << BIT_5A_)
-				| (1 << BIT_5A1)
-				| (1 << BIT_5A2);
+			val |= (1 << BIT_TUNER) | pt2_rail_bits(pw->off_mask);
 			break;
 		case TUNER_POWER_ON_RESET_DISABLE:
-			val |= (1 << BIT_TUNER)
-				| (1 << BIT_RESET)
-				| (1 << BIT_33A1)
-				| (1 << BIT_33A2)
-				| (1 << BIT_5A_)
-				| (1 << BIT_5A1)
-				| (1 << BIT_5A2);
+			val |= (1 << BIT_TUNER) | (1 << BIT_RESET) | pt2_rail_bits(pw->off_mask);
 			break ;
 		}
 	}
 	writel(val, (regs + CFG_REGS_ADDR));
 }
+
+void	settuner_reset(void __iomem *regs, int cardtype, PT1_POWER *pw, __u32 lnb, __u32 tuner)
+{
+	mutex_lock(&pw->lock);
+	pw->lnb   = lnb;
+	pw->tuner = tuner;
+	pt1_power_write(regs, cardtype, pw);
+	mutex_unlock(&pw->lock);
+}
+
+/*
+ * PT2 の個別チューナーレールを ON/OFF する (power_save=1 のときだけ使う)。
+ * 戻り値: レールの状態が実際に変わったら 1
+ */
+static int	pt2_rail_set(void __iomem *regs, int cardtype, PT1_POWER *pw,
+						 unsigned int rail, int on)
+{
+	int	changed = 0;
+
+	mutex_lock(&pw->lock);
+	if(on && (pw->off_mask & rail)){
+		pw->off_mask &= ~rail;
+		changed = 1;
+	}else if(!on && !(pw->off_mask & rail)){
+		pw->off_mask |= rail;
+		changed = 1;
+	}
+	if(changed){
+		pt1_log(2, "PT2 rail %s mask=0x%x\n", on ? "on" : "off", pw->off_mask);
+		pt1_power_write(regs, cardtype, pw);
+	}
+	mutex_unlock(&pw->lock);
+	return changed;
+}
+
+/* I2C アドレスと種別から PT2 のレールを求める。見つからなければ 0 */
+static unsigned int	pt2_rail_of(int address, int tuner_type)
+{
+	int	i;
+
+	for(i = 0 ; i < 2 ; i++){
+		if(tuner_type == CHANNEL_TYPE_ISDB_S && address == tuner_info[i].isdb_s)
+			return i ? PT2_RAIL_S1 : PT2_RAIL_S0;
+		if(tuner_type == CHANNEL_TYPE_ISDB_T && address == tuner_info[i].isdb_t)
+			return i ? PT2_RAIL_T1 : PT2_RAIL_T0;
+	}
+	return 0 ;
+}
+
 static	int		init_isdb_s(void __iomem *regs, int cardtype, struct mutex *lock, __u32 addr)
 {
 
@@ -185,9 +253,25 @@ int		tuner_init(void __iomem *regs, int cardtype, struct mutex *lock, int tuner_
 
 	return 0 ;
 }
-void	set_sleepmode(void __iomem *regs, struct mutex *lock, int address, int tuner_type, int type)
+/* PT2 のチューナー電源レールを切って消費電力・発熱を抑える (既定 OFF=従来動作) */
+int pt1_power_save;
+/* レールを入れ直した後、チューナーが安定するまでの待ち(ms)。実機で動作報告のある保守的な値 */
+#define		PT2_RAIL_SETTLE_MS	1000
+
+void	set_sleepmode(void __iomem *regs, int cardtype, PT1_POWER *pw,
+					  struct mutex *lock, int address, int tuner_type, int type)
 {
 	WBLOCK	wk;
+	unsigned int	rail = 0;
+
+	if(pt1_power_save && cardtype == PT2)
+		rail = pt2_rail_of(address, tuner_type);
+
+	/* WAKEUP: I2C を叩く前にレールを入れる */
+	if(type == TYPE_WAKEUP && rail){
+		if(pt2_rail_set(regs, cardtype, pw, rail, 1))
+			msleep(PT2_RAIL_SETTLE_MS);
+	}
 
 	if(type == TYPE_WAKEUP){
 		switch(tuner_type){
@@ -228,6 +312,9 @@ void	set_sleepmode(void __iomem *regs, struct mutex *lock, int address, int tune
 			i2c_write(regs, lock, &wk);
 			break ;
 		}
+		/* SLEEP: I2C でスリープさせた後にレールを切る */
+		if(rail)
+			pt2_rail_set(regs, cardtype, pw, rail, 0);
 	}
 }
 

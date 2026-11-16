@@ -89,11 +89,13 @@ static unsigned int ring_mask  = 131071;        /* ring_count - 1, pt1_pci_init(
 
 module_param_named(debug, pt1_debug, int, 0644);
 module_param(lnb, int, 0);
+module_param_named(power_save, pt1_power_save, int, 0);
 module_param(dma_cpu, int, 0444);
 module_param(dma_rt, bool, 0644);
 module_param(ring_count, uint, 0444);
 MODULE_PARM_DESC(debug, "log verbosity (0:quiet 1:normal(default) 2:verbose), changeable at runtime");
 MODULE_PARM_DESC(lnb, "LNB level (0:OFF 1:+11V 2:+15V)");
+MODULE_PARM_DESC(power_save, "PT2: cut power to idle tuners (0:off 1:on, default 0). Tuning start gets slower");
 MODULE_PARM_DESC(dma_cpu, "CPU number to pin DMA/watchdog threads (-1=no pinning, default)");
 MODULE_PARM_DESC(dma_rt, "Elevate DMA thread to SCHED_FIFO(low) (default=0/OFF, use with caution on N100)");
 MODULE_PARM_DESC(ring_count, "Ring buffer slots per channel (default=131072=~24MB/ch, must be power of 2)");
@@ -186,6 +188,7 @@ typedef struct  _pt1_device{
         PT1_CHANNEL             *channel[MAX_CHANNEL];
         int                     cardtype;
         int                     lnb_level;      /* 現在の LNB 給電レベル (LNB_OFF/11V/15V) */
+        PT1_POWER               power;          /* 電源レジスタの状態 (LNB/チューナー/PT2 レール) */
         unsigned long last_reset;
         /* DMA watchdog */
         atomic64_t              dma_counter ____cacheline_aligned;
@@ -1221,7 +1224,8 @@ static int pt1_open(struct inode *inode, struct file *file)
                          * (チャンネル単位)ではなく、他の全 I2C アクセスと
                          * 同じ channel->ptr->lock (デバイス単位)で保護する。
                          */
-                        set_sleepmode(channel->ptr->regs, &channel->ptr->lock,
+                        set_sleepmode(channel->ptr->regs, channel->ptr->cardtype,
+                                                  &channel->ptr->power, &channel->ptr->lock,
                                                   channel->address, channel->type,
                                                   TYPE_WAKEUP);
                         msleep(100);
@@ -1296,7 +1300,8 @@ static int pt1_release(struct inode *inode, struct file *file)
 
                 /* send tuner to sleep */
                 /* FIX: pt1_open()と同じ理由でchannel->ptr->lock(デバイス単位)を使う */
-                set_sleepmode(channel->ptr->regs, &channel->ptr->lock,
+                set_sleepmode(channel->ptr->regs, channel->ptr->cardtype,
+                                          &channel->ptr->power, &channel->ptr->lock,
                                           channel->address, channel->type, TYPE_SLEEP);
                 msleep(100);
         } else {
@@ -1714,7 +1719,7 @@ static long pt1_do_ioctl(struct file  *file, unsigned int cmd, unsigned long arg
                                         pr_err("LNB_ENABLE invalid level(%d)\n", lnb_eff);
                                         return -EINVAL;
                                 }
-                                settuner_reset(channel->ptr->regs, channel->ptr->cardtype, lnb_eff, TUNER_POWER_ON_RESET_DISABLE);
+                                settuner_reset(channel->ptr->regs, channel->ptr->cardtype, &channel->ptr->power, lnb_eff, TUNER_POWER_ON_RESET_DISABLE);
                                 /* 実際に給電するとき(0V 以外)だけログを出す */
                                 if (lnb_eff != LNB_OFF)
                                         pr_info("LNB on %s\n", voltage[lnb_eff]);
@@ -1727,7 +1732,7 @@ static long pt1_do_ioctl(struct file  *file, unsigned int cmd, unsigned long arg
                                 return 0 ;
                         count = count_used_bs_tuners(channel->ptr);
                         if(count <= 1) {
-                                settuner_reset(channel->ptr->regs, channel->ptr->cardtype, LNB_OFF, TUNER_POWER_ON_RESET_DISABLE);
+                                settuner_reset(channel->ptr->regs, channel->ptr->cardtype, &channel->ptr->power, LNB_OFF, TUNER_POWER_ON_RESET_DISABLE);
                                 /* 給電していたとき(ON→OFF)だけログを出す */
                                 if (channel->ptr->lnb_level != LNB_OFF)
                                         pr_info("LNB off\n");
@@ -2105,6 +2110,7 @@ static int pt1_pci_init_one (struct pci_dev *pdev,
          * 最後に返す、デバイス自身の所有分」を表す。
          */
         kref_init(&dev_conf->refcount);
+        pt1_power_init(&dev_conf->power);
         for (i = 0; i < DMA_RING_SIZE; i++) {
                 dev_conf->dmactl[i] = kzalloc(sizeof(DMA_CONTROL), GFP_KERNEL);
                 if(!dev_conf->dmactl[i]){
@@ -2150,10 +2156,10 @@ static int pt1_pci_init_one (struct pci_dev *pdev,
                 goto out_err_fpga;
         }
         // チューナリセット
-        settuner_reset(dev_conf->regs, dev_conf->cardtype, LNB_OFF, TUNER_POWER_ON_RESET_ENABLE);
+        settuner_reset(dev_conf->regs, dev_conf->cardtype, &dev_conf->power, LNB_OFF, TUNER_POWER_ON_RESET_ENABLE);
         msleep(100);
 
-        settuner_reset(dev_conf->regs, dev_conf->cardtype, LNB_OFF, TUNER_POWER_ON_RESET_DISABLE);
+        settuner_reset(dev_conf->regs, dev_conf->cardtype, &dev_conf->power, LNB_OFF, TUNER_POWER_ON_RESET_DISABLE);
         msleep(100);
         mutex_init(&dev_conf->lock);
 
@@ -2167,7 +2173,8 @@ static int pt1_pci_init_one (struct pci_dev *pdev,
         }
         // 初期化完了
         for(lp = 0 ; lp < MAX_CHANNEL ; lp++){
-                set_sleepmode(dev_conf->regs, &dev_conf->lock,
+                set_sleepmode(dev_conf->regs, dev_conf->cardtype, &dev_conf->power,
+                                                &dev_conf->lock,
                                                 i2c_address[lp], channeltype[lp], TYPE_SLEEP);
 
                 msleep(100);
@@ -2532,7 +2539,7 @@ static void pt1_pci_remove_one(struct pci_dev *pdev)
                 unregister_chrdev_region(dev_conf->dev, MAX_CHANNEL);
                 writel(0xb0b0000, dev_conf->regs);
                 writel(0, dev_conf->regs + CFG_REGS_ADDR);
-                settuner_reset(dev_conf->regs, dev_conf->cardtype, LNB_OFF, TUNER_POWER_OFF);
+                settuner_reset(dev_conf->regs, dev_conf->cardtype, &dev_conf->power, LNB_OFF, TUNER_POWER_OFF);
                 release_mem_region(dev_conf->mmio_start, dev_conf->mmio_len);
                 /*
                  * FIX: i2c_state_table(pt1_i2c.c) に regs をキーとして残った

@@ -109,9 +109,28 @@ typedef	struct	_ISDB_T_TMCC {
 /***************************************************************************/
 /* チューナ状態定義                                                        */
 /***************************************************************************/
-extern	void	settuner_reset(void __iomem *, int, __u32, __u32);
+/*
+ * カード単位の電源レジスタ(CFG_REGS_ADDR)の状態。
+ * LNB・チューナー全体電源・PT2 の個別チューナー電源レールを合成して書き込む。
+ * off_mask は power_save=1 のとき、スリープ中のチューナーのレールを切るために使う
+ * (bit0:S0 bit1:S1 bit2:T0 bit3:T1。立っているレールが OFF)。
+ */
+#define		PT2_RAIL_S0		(1U << 0)
+#define		PT2_RAIL_S1		(1U << 1)
+#define		PT2_RAIL_T0		(1U << 2)
+#define		PT2_RAIL_T1		(1U << 3)
+typedef struct	_PT1_POWER{
+	struct mutex	lock;
+	__u32		lnb;			// LNB_OFF/11V/15V
+	__u32		tuner;			// TUNER_POWER_*
+	unsigned int	off_mask;		// OFF にするレール (PT2 のみ)
+}PT1_POWER;
+
+extern	int		pt1_power_save;
+extern	void	pt1_power_init(PT1_POWER *);
+extern	void	settuner_reset(void __iomem *, int, PT1_POWER *, __u32, __u32);
 extern	int		tuner_init(void __iomem *, int, struct mutex *, int);
-extern	void	set_sleepmode(void __iomem *, struct mutex *, int, int, int);
+extern	void	set_sleepmode(void __iomem *, int, PT1_POWER *, struct mutex *, int, int, int);
 
 extern	int		bs_tune(void __iomem *, struct mutex *, int, int, ISDB_S_TMCC *);
 extern  int     ts_lock(void __iomem *, struct mutex *, int, __u16);
